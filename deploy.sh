@@ -204,6 +204,25 @@ cmd_ssl() {
     # Временная nginx-конфигурация только для HTTP (ACME challenge)
     log_step "Запускаю временный nginx для ACME challenge..."
 
+    # Освобождаем порт 80 — останавливаем всё, что его занимает
+    log_step "Освобождаю порт 80..."
+    docker compose down 2>/dev/null || true
+    docker stop temp-nginx 2>/dev/null && docker rm temp-nginx 2>/dev/null || true
+
+    # Если порт всё ещё занят (не Docker) — проверяем
+    if ss -tlnp 2>/dev/null | grep -q ':80 ' || netstat -tlnp 2>/dev/null | grep -q ':80 '; then
+        # Пробуем остановить системный nginx / apache
+        systemctl stop nginx 2>/dev/null || true
+        systemctl stop apache2 2>/dev/null || true
+        sleep 1
+        if ss -tlnp 2>/dev/null | grep -q ':80 '; then
+            log_error "Порт 80 всё ещё занят. Найди процесс:"
+            ss -tlnp | grep ':80 ' || netstat -tlnp | grep ':80 '
+            log_error "Останови его вручную и повтори: ./deploy.sh ssl"
+            exit 1
+        fi
+    fi
+
     # Создаем временный nginx конфиг
     cat > nginx/nginx-temp.conf <<TEMPCONF
 events { worker_connections 128; }
@@ -225,6 +244,14 @@ TEMPCONF
         nginx:alpine
 
     sleep 3
+
+    # Проверяем что контейнер запустился
+    if ! docker ps --format '{{.Names}}' | grep -q 'temp-nginx'; then
+        log_error "Не удалось запустить временный nginx. Логи:"
+        docker logs temp-nginx 2>&1 || true
+        docker rm temp-nginx 2>/dev/null || true
+        exit 1
+    fi
 
     # Запрашиваем сертификат
     log_step "Запрашиваю сертификат у Let's Encrypt..."
