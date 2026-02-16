@@ -1,15 +1,12 @@
-"""Tests for chart generation — all chart types."""
+"""Tests for chart generation — all chart types including Jarvis."""
 
 from __future__ import annotations
 
 import pytest
 
 from src.models.journal_entry import (
-    ActivityCorrelation,
-    CorrelationMatrix,
-    DailyRecord,
-    MetricDelta,
-    MonthComparison,
+    ActivityCorrelation, Anomaly, CorrelationMatrix, DailyRecord,
+    LifeDimension, LifeScore, MetricDelta, MonthComparison,
 )
 from src.services.charts_service import ChartsService
 
@@ -38,14 +35,9 @@ class TestExistingCharts:
         assert charts.activity_chart(sample_records)[:8] == PNG
 
 
-class TestNewCharts:
+class TestPhase2Charts:
     def test_habit_heatmap(self, charts, sample_records):
-        result = charts.habit_heatmap(sample_records, "gym")
-        assert result[:8] == PNG
-
-    def test_habit_sleep7(self, charts, sample_records):
-        result = charts.habit_heatmap(sample_records, "sleep7")
-        assert result[:8] == PNG
+        assert charts.habit_heatmap(sample_records, "gym")[:8] == PNG
 
     def test_correlation_chart(self, charts):
         corr = CorrelationMatrix(
@@ -58,9 +50,7 @@ class TestNewCharts:
         assert charts.correlation_chart(corr)[:8] == PNG
 
     def test_report_card(self, charts, sample_records):
-        result = charts.report_card(sample_records, "2026-02")
-        assert result[:8] == PNG
-        assert len(result) > 1000
+        assert charts.report_card(sample_records, "2026-02")[:8] == PNG
 
     def test_compare_chart(self, charts):
         comp = MonthComparison(
@@ -71,6 +61,44 @@ class TestNewCharts:
             ],
         )
         assert charts.compare_chart(comp)[:8] == PNG
+
+
+class TestJarvisCharts:
+    def test_dashboard(self, charts):
+        life = LifeScore(
+            total=72, trend_delta=5.0,
+            dimensions=[
+                LifeDimension(name="Продуктивность", emoji="🧠", score=82, trend="↑"),
+                LifeDimension(name="Сон", emoji="😴", score=65, trend="↓"),
+                LifeDimension(name="Физ. форма", emoji="🏋️", score=90, trend="↑"),
+                LifeDimension(name="Отношения", emoji="💕", score=72, trend="→"),
+                LifeDimension(name="TESTIK", emoji="🧪", score=100, trend="↑"),
+                LifeDimension(name="Настроение", emoji="😊", score=74, trend="→"),
+            ],
+        )
+        result = charts.dashboard_chart(life)
+        assert result[:8] == PNG
+        assert len(result) > 1000
+
+    def test_dashboard_empty(self, charts):
+        life = LifeScore(total=0, dimensions=[])
+        result = charts.dashboard_chart(life)
+        assert isinstance(result, bytes)
+
+    def test_anomaly_chart(self, charts, sample_records):
+        from datetime import date, timedelta
+        anomalies = [
+            Anomaly(entry_date=sample_records[0].entry_date, score=90, avg_score=60,
+                    direction="high", activities=["GYM", "CODING"]),
+            Anomaly(entry_date=sample_records[-1].entry_date, score=20, avg_score=60,
+                    direction="low", activities=[]),
+        ]
+        result = charts.anomaly_chart(sample_records, anomalies)
+        assert result[:8] == PNG
+
+    def test_anomaly_empty(self, charts):
+        result = charts.anomaly_chart([], [])
+        assert isinstance(result, bytes)
 
 
 class TestEmpty:

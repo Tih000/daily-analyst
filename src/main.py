@@ -1,4 +1,4 @@
-"""FastAPI + Telegram bot with 19 commands, proactive alerts, and weekly digest."""
+"""FastAPI + Telegram Jarvis: 24 commands, free-chat, proactive alerts, morning briefing."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from typing import AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, Request, Response, status
 from telegram import Bot, Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from src.config import get_settings
 from src.models.journal_entry import DailyRecord, Goal
@@ -69,7 +69,7 @@ settings = get_settings()
 bot_app = Application.builder().token(settings.telegram.bot_token).build()
 
 
-# ── Auth ────────────────────────────────────────────────────────────────────
+# ── Auth decorator ──────────────────────────────────────────────────────────
 
 def authorized(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -92,42 +92,42 @@ def authorized(func):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# COMMANDS
+# ORIGINAL COMMANDS (11)
 # ═══════════════════════════════════════════════════════════════════════════
 
 @authorized
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     assert update.message
     text = (
-        "👋 *Привет! Я твой AI Дневник-Аналитик*\n\n"
-        "Читаю весь твой Notion-дневник и даю глубокий анализ жизни.\n\n"
+        "👋 *Привет! Я Jarvis — твой AI Дневник-Аналитик*\n\n"
+        "Я читаю весь твой Notion-дневник и вижу полную картину жизни.\n"
+        "Просто напиши мне текст — и я отвечу как друг-аналитик.\n\n"
         "📊 *Аналитика:*\n"
-        "/analyze `[месяц]` — анализ месяца\n"
-        "/compare `[мес1] [мес2]` — сравнить 2 месяца\n"
+        "/analyze — анализ месяца\n"
+        "/compare — сравнить 2 месяца\n"
         "/correlations — матрица корреляций\n"
         "/day\\_types — классификатор дней\n"
-        "/report `[месяц]` — карточка месяца\n\n"
+        "/report — карточка месяца\n\n"
         "🔮 *Прогнозы:*\n"
-        "/predict — риск выгорания\n"
+        "/predict — burnout риск\n"
         "/tomorrow\\_mood — прогноз завтра\n"
-        "/best\\_days `[месяц]` — топ-3 дня\n\n"
+        "/best\\_days — топ-3 дня\n\n"
         "🧠 *Глубокий анализ:*\n"
-        "/optimal\\_hours — оптимальный режим\n"
-        "/kate\\_impact — влияние Kate\n"
-        "/testik\\_patterns — TESTIK паттерны\n"
-        "/sleep\\_optimizer — оптимизация сна\n"
-        "/money\\_forecast — рабочие паттерны\n"
-        "/weak\\_spots — слабые места\n\n"
+        "/dashboard — Life Score\n"
+        "/formula — формула идеального дня\n"
+        "/whatif `<сценарий>` — симулятор\n"
+        "/anomalies — аномалии\n"
+        "/milestones — вехи жизни\n\n"
         "🏆 *Геймификация:*\n"
-        "/streaks — текущие серии\n"
-        "/habits `<name>` — тепловая карта привычки\n"
-        "/set\\_goal `<act> <n/period>` — поставить цель\n"
-        "/goals — прогресс целей\n"
+        "/streaks — серии\n"
+        "/habits `<name>` — тепловая карта\n"
+        "/set\\_goal / /goals — цели\n\n"
+        "🧪 /optimal\\_hours /kate\\_impact /testik\\_patterns\n"
+        "😴 /sleep\\_optimizer /money\\_forecast /weak\\_spots\n\n"
+        "💬 *Или просто напиши любое сообщение — я пойму!*"
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
-
-# ── Monthly analysis ────────────────────────────────────────────────────────
 
 @authorized
 async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -156,8 +156,6 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"📋 Задач: {analysis.total_tasks}\n"
         f"🏋️ GYM: {format_percentage(analysis.workout_rate)}\n"
         f"💻 Код: {format_percentage(analysis.coding_rate)}\n"
-        f"🎓 Универ: {format_percentage(analysis.university_rate)}\n"
-        f"💕 Kate: {format_percentage(analysis.kate_rate)}\n"
     )
     if analysis.activity_breakdown:
         text += "\n📈 *Топ активностей:*\n"
@@ -175,8 +173,6 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_photo(photo=io.BytesIO(charts_service.activity_chart(records)))
 
 
-# ── Predict burnout ─────────────────────────────────────────────────────────
-
 @authorized
 async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     assert update.message
@@ -192,8 +188,6 @@ async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if len(records) >= 3:
         await update.message.reply_photo(photo=io.BytesIO(charts_service.burnout_chart(records)))
 
-
-# ── Best days ───────────────────────────────────────────────────────────────
 
 @authorized
 async def cmd_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -218,14 +212,13 @@ async def cmd_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
-# ── Optimal hours ───────────────────────────────────────────────────────────
-
 @authorized
 async def cmd_optimal_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     assert update.message
     await update.message.reply_text("⏰ Анализирую...")
     records = await notion_service.get_recent(60)
-    await update.message.reply_text(truncate_text(f"⏰ *Оптимальный режим*\n\n{await ai_analyzer.optimal_hours(records)}"), parse_mode="Markdown")
+    result = await ai_analyzer.optimal_hours(records)
+    await update.message.reply_text(truncate_text(f"⏰ *Оптимальный режим*\n\n{result}"), parse_mode="Markdown")
 
 
 @authorized
@@ -280,7 +273,9 @@ async def cmd_tomorrow_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(truncate_text(f"🔮 *Прогноз*\n\n{await ai_analyzer.tomorrow_mood(records)}"), parse_mode="Markdown")
 
 
-# ── NEW: Streaks ────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 2 COMMANDS (streaks, compare, correlations, day_types, report, habits, goals)
+# ═══════════════════════════════════════════════════════════════════════════
 
 @authorized
 async def cmd_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -296,8 +291,6 @@ async def cmd_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         text += f"{s.emoji} *{s.name}:* {s.current} дн. (рекорд: {s.record})\n{bar}\n\n"
     await update.message.reply_text(text, parse_mode="Markdown")
 
-
-# ── NEW: Compare months ────────────────────────────────────────────────────
 
 @authorized
 async def cmd_compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -322,8 +315,6 @@ async def cmd_compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_photo(photo=io.BytesIO(charts_service.compare_chart(comp)))
 
 
-# ── NEW: Correlations ───────────────────────────────────────────────────────
-
 @authorized
 async def cmd_correlations(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     assert update.message
@@ -343,8 +334,6 @@ async def cmd_correlations(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_photo(photo=io.BytesIO(charts_service.correlation_chart(corr)))
 
 
-# ── NEW: Day types ──────────────────────────────────────────────────────────
-
 @authorized
 async def cmd_day_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     assert update.message
@@ -353,8 +342,6 @@ async def cmd_day_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     result = await ai_analyzer.classify_day_types(records)
     await update.message.reply_text(truncate_text(f"🏷️ *Типы дней*\n\n{result}"), parse_mode="Markdown")
 
-
-# ── NEW: Report card ────────────────────────────────────────────────────────
 
 @authorized
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -373,25 +360,19 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_photo(photo=io.BytesIO(chart), caption=f"📋 Report Card: {label}")
 
 
-# ── NEW: Habits heatmap ─────────────────────────────────────────────────────
-
 @authorized
 async def cmd_habits(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     assert update.message
     arg = sanitize_command_arg(update.message.text or "").strip()
     if not arg:
         await update.message.reply_text(
-            "📅 Укажи привычку:\n"
-            "/habits gym\n/habits coding\n/habits university\n"
-            "/habits kate\n/habits sleep7\n/habits `<любой тег>`"
+            "📅 Укажи привычку:\n/habits gym\n/habits coding\n/habits sleep7\n/habits `<любой тег>`"
         )
         return
     records = await notion_service.get_recent(90)
     chart = charts_service.habit_heatmap(records, arg)
     await update.message.reply_photo(photo=io.BytesIO(chart), caption=f"📅 {arg.upper()} — 3 months")
 
-
-# ── NEW: Goals ──────────────────────────────────────────────────────────────
 
 @authorized
 async def cmd_set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -404,15 +385,11 @@ async def cmd_set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     uid = update.effective_user.id  # type: ignore
     goal = Goal(
-        id=str(uuid.uuid4())[:8],
-        user_id=uid,
-        name=activity,
-        target_activity=activity,
-        target_count=count,
-        period=period,
+        id=str(uuid.uuid4())[:8], user_id=uid, name=activity,
+        target_activity=activity, target_count=count, period=period,
     )
     cache_service.upsert_goal(goal)
-    await update.message.reply_text(f"✅ Цель установлена: *{activity}* {count}/{period}", parse_mode="Markdown")
+    await update.message.reply_text(f"✅ Цель: *{activity}* {count}/{period}", parse_mode="Markdown")
 
 
 @authorized
@@ -421,7 +398,7 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id  # type: ignore
     goals = cache_service.get_goals(uid)
     if not goals:
-        await update.message.reply_text("📭 Нет целей. Используй /set\\_goal для создания.", parse_mode="Markdown")
+        await update.message.reply_text("📭 Нет целей. /set\\_goal для создания.", parse_mode="Markdown")
         return
     records = await notion_service.get_recent(30)
     progress_list = ai_analyzer.compute_goal_progress(goals, records)
@@ -432,9 +409,144 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text, parse_mode="Markdown")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# PHASE 3 — JARVIS LEVEL COMMANDS
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ── /dashboard — Life Score ─────────────────────────────────────────────────
+
+@authorized
+async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    assert update.message
+    await update.message.reply_text("📊 Считаю Life Score...")
+    records = await notion_service.get_recent(30)
+    life = ai_analyzer.compute_life_score(records)
+
+    text = f"🎯 *LIFE SCORE: {life.total:.0f}/100*"
+    if life.trend_delta != 0:
+        arrow = "↑" if life.trend_delta > 0 else "↓"
+        text += f" ({arrow} {life.trend_delta:+.1f})"
+    text += "\n\n"
+    for d in life.dimensions:
+        text += f"{d.emoji} {d.name}: {d.bar} {d.score:.0f}% {d.trend}\n"
+
+    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_photo(photo=io.BytesIO(charts_service.dashboard_chart(life)))
+
+
+# ── /formula — Perfect Day Formula ─────────────────────────────────────────
+
+@authorized
+async def cmd_formula(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    assert update.message
+    await update.message.reply_text("🧬 Вычисляю формулу...")
+    records = await notion_service.get_recent(90)
+    result = await ai_analyzer.formula(records)
+    await update.message.reply_text(truncate_text(f"🧬 *Формула идеального дня*\n\n{result}"), parse_mode="Markdown")
+
+
+# ── /whatif — What-If Simulator ─────────────────────────────────────────────
+
+@authorized
+async def cmd_whatif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    assert update.message
+    arg = sanitize_command_arg(update.message.text or "").strip()
+    if not arg:
+        await update.message.reply_text(
+            "🔮 Примеры:\n"
+            "/whatif без gym неделю\n"
+            "/whatif testik minus 5 дней\n"
+            "/whatif coding 8h/day 2 weeks"
+        )
+        return
+    await update.message.reply_text("🔮 Моделирую сценарий...")
+    records = await notion_service.get_recent(60)
+    result = await ai_analyzer.whatif(records, arg)
+    await update.message.reply_text(truncate_text(f"🔮 *What-If: {arg}*\n\n{result}"), parse_mode="Markdown")
+
+
+# ── /anomalies — Anomaly Detection ─────────────────────────────────────────
+
+@authorized
+async def cmd_anomalies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    assert update.message
+    await update.message.reply_text("🔍 Ищу аномалии...")
+    records = await notion_service.get_recent(60)
+    anomalies = ai_analyzer.detect_anomalies(records)
+    explanation = await ai_analyzer.explain_anomalies(records)
+
+    text = f"🔍 *Аномалии*\n\n{explanation}"
+    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+    if anomalies and records:
+        await update.message.reply_photo(photo=io.BytesIO(charts_service.anomaly_chart(records, anomalies)))
+
+
+# ── /milestones — Life Milestones ───────────────────────────────────────────
+
+@authorized
+async def cmd_milestones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    assert update.message
+    records = await notion_service.get_recent(365)
+    milestones = ai_analyzer.detect_milestones(records)
+
+    # Also load saved ones
+    saved = cache_service.get_milestones(datetime.utcnow().year)
+    seen_ids = {m.id for m in milestones}
+    for s in saved:
+        if s.id not in seen_ids:
+            milestones.append(s)
+
+    # Save new milestones
+    for m in milestones:
+        cache_service.add_milestone(m)
+
+    milestones.sort(key=lambda m: m.entry_date, reverse=True)
+
+    if not milestones:
+        await update.message.reply_text("📭 Нет значимых вех пока.")
+        return
+
+    text = f"📌 *Milestones {datetime.utcnow().year}*\n\n"
+    for m in milestones[:15]:
+        text += f"{m.emoji} *{m.entry_date}* — {m.title}\n"
+        if m.description:
+            text += f"   {m.description}\n"
+    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FREE CHAT — handle any text message
+# ═══════════════════════════════════════════════════════════════════════════
+
+@authorized
+async def handle_free_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    assert update.message and update.message.text
+    uid = update.effective_user.id  # type: ignore
+    user_text = update.message.text.strip()
+
+    if not user_text or user_text.startswith("/"):
+        return
+
+    # Save user message
+    cache_service.save_message(uid, "user", user_text)
+
+    # Get context
+    records = await notion_service.get_recent(30)
+    chat_history = cache_service.get_recent_messages(uid, limit=20)
+
+    # Generate response
+    response = await ai_analyzer.free_chat(user_text, records, chat_history)
+
+    # Save bot response
+    cache_service.save_message(uid, "assistant", response)
+    cache_service.cleanup_messages(uid, keep=50)
+
+    await update.message.reply_text(truncate_text(response), parse_mode="Markdown")
+
+
 # ── Register all handlers ──────────────────────────────────────────────────
 
-for name, handler in [
+_commands = [
     ("start", cmd_start), ("analyze", cmd_analyze), ("predict", cmd_predict),
     ("best_days", cmd_best_days), ("optimal_hours", cmd_optimal_hours),
     ("kate_impact", cmd_kate_impact), ("testik_patterns", cmd_testik_patterns),
@@ -444,48 +556,86 @@ for name, handler in [
     ("correlations", cmd_correlations), ("day_types", cmd_day_types),
     ("report", cmd_report), ("habits", cmd_habits),
     ("set_goal", cmd_set_goal), ("goals", cmd_goals),
-]:
+    ("dashboard", cmd_dashboard), ("formula", cmd_formula),
+    ("whatif", cmd_whatif), ("anomalies", cmd_anomalies),
+    ("milestones", cmd_milestones),
+]
+for name, handler in _commands:
     bot_app.add_handler(CommandHandler(name, handler))
 
+# Free chat handler — catches all text that isn't a command
+bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_chat))
+
 
 # ═══════════════════════════════════════════════════════════════════════════
-# BACKGROUND: Proactive alerts + weekly digest
+# BACKGROUND: Morning briefing + proactive alerts + weekly digest
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def _background_alerts_loop() -> None:
-    """Check for alerts every 6 hours and send weekly digest on Sundays."""
-    await asyncio.sleep(30)  # let bot start
+_last_briefing_date: str = ""
+_last_digest_date: str = ""
+
+
+async def _background_loop() -> None:
+    """Runs every 30 minutes: morning briefing (9:00), alerts (6h), weekly digest (Sun 18:00)."""
+    global _last_briefing_date, _last_digest_date
+    await asyncio.sleep(30)
+
     while True:
         try:
-            records = await notion_service.get_recent(14, force_refresh=True)
-            alerts = ai_analyzer.check_alerts(records)
-
-            if alerts and settings.telegram.allowed_user_ids:
-                alert_text = "⚡ *Proactive Alert*\n\n" + "\n".join(f"• {a}" for a in alerts)
-                for uid in settings.telegram.allowed_user_ids:
-                    try:
-                        await bot_app.bot.send_message(chat_id=uid, text=alert_text, parse_mode="Markdown")
-                    except Exception as e:
-                        logger.warning("Failed to send alert to %s: %s", uid, e)
-
-            # Weekly digest on Sundays at ~18:00 check
             now = datetime.utcnow()
-            if now.weekday() == 6 and 15 <= now.hour <= 18:
-                week_records = await notion_service.get_recent(14)
-                digest = await ai_analyzer.weekly_digest(week_records)
-                digest_text = f"📋 *Еженедельный дайджест*\n\n{digest}"
-                for uid in settings.telegram.allowed_user_ids:
-                    try:
-                        await bot_app.bot.send_message(
-                            chat_id=uid, text=truncate_text(digest_text), parse_mode="Markdown"
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to send digest to %s: %s", uid, e)
+            today_str = now.strftime("%Y-%m-%d")
+            uids = list(settings.telegram.allowed_user_ids)
+
+            # Morning briefing: ~9:00 UTC (adjust for timezone)
+            if 8 <= now.hour <= 10 and _last_briefing_date != today_str:
+                _last_briefing_date = today_str
+                try:
+                    records = await notion_service.get_recent(14, force_refresh=True)
+                    briefing = await ai_analyzer.morning_briefing(records)
+                    for uid in uids:
+                        try:
+                            await bot_app.bot.send_message(chat_id=uid, text=truncate_text(briefing), parse_mode="Markdown")
+                        except Exception as e:
+                            logger.warning("Morning briefing send error: %s", e)
+                except Exception as e:
+                    logger.error("Morning briefing error: %s", e, exc_info=True)
+
+            # Enhanced alerts: every 6 hours
+            if now.hour in (0, 6, 12, 18) and now.minute < 35:
+                try:
+                    records = await notion_service.get_recent(14, force_refresh=True)
+                    alerts = await ai_analyzer.enhanced_alerts(records)
+                    if alerts:
+                        alert_text = "⚡ *Jarvis Alert*\n\n" + "\n".join(f"• {a}" for a in alerts)
+                        for uid in uids:
+                            try:
+                                await bot_app.bot.send_message(chat_id=uid, text=alert_text, parse_mode="Markdown")
+                            except Exception as e:
+                                logger.warning("Alert send error: %s", e)
+                except Exception as e:
+                    logger.error("Alert loop error: %s", e, exc_info=True)
+
+            # Weekly digest: Sunday 18:00 UTC
+            if now.weekday() == 6 and 17 <= now.hour <= 19 and _last_digest_date != today_str:
+                _last_digest_date = today_str
+                try:
+                    records = await notion_service.get_recent(14)
+                    digest = await ai_analyzer.weekly_digest(records)
+                    digest_text = f"📋 *Еженедельный дайджест*\n\n{digest}"
+                    for uid in uids:
+                        try:
+                            await bot_app.bot.send_message(
+                                chat_id=uid, text=truncate_text(digest_text), parse_mode="Markdown"
+                            )
+                        except Exception as e:
+                            logger.warning("Digest send error: %s", e)
+                except Exception as e:
+                    logger.error("Digest error: %s", e, exc_info=True)
 
         except Exception as e:
             logger.error("Background loop error: %s", e, exc_info=True)
 
-        await asyncio.sleep(6 * 3600)  # every 6 hours
+        await asyncio.sleep(30 * 60)  # every 30 minutes
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -502,18 +652,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await bot_app.bot.set_webhook(url=webhook_url)
         logger.info("Webhook → %s", webhook_url)
 
-    # Start background alerts
-    alert_task = asyncio.create_task(_background_alerts_loop())
-
-    logger.info("Daily Analyst v2 started — 19 commands + alerts")
+    bg_task = asyncio.create_task(_background_loop())
+    logger.info("Jarvis v3 started — 24 commands + free-chat + proactive AI")
     yield
 
-    alert_task.cancel()
+    bg_task.cancel()
     await bot_app.stop()
     await bot_app.shutdown()
 
 
-app = FastAPI(title="Daily Analyst Bot", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="Jarvis — Daily Analyst", version="3.0.0", lifespan=lifespan)
 
 
 @app.get("/health")

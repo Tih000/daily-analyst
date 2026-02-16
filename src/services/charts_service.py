@@ -15,9 +15,11 @@ import matplotlib.dates as mdates
 import numpy as np
 
 from src.models.journal_entry import (
+    Anomaly,
     CorrelationMatrix,
     DailyRecord,
     DayRating,
+    LifeScore,
     MonthComparison,
     StreakInfo,
     TestikStatus,
@@ -531,5 +533,97 @@ class ChartsService:
         ax.set_yticklabels(names)
         ax.legend(loc="lower right")
         ax.grid(True, axis="x")
+        fig.tight_layout()
+        return self._fig_to_bytes(fig)
+
+    # ── Life Score Dashboard ─────────────────────────────────────────────────
+
+    def dashboard_chart(self, life_score: LifeScore) -> bytes:
+        if not life_score.dimensions:
+            return self._empty_chart("No data for dashboard")
+
+        fig = plt.figure(figsize=(10, 8))
+        fig.suptitle("LIFE SCORE DASHBOARD", fontsize=18, fontweight="bold")
+
+        # Big score in center
+        ax_score = fig.add_axes([0.3, 0.72, 0.4, 0.2])
+        ax_score.set_facecolor(COLORS["bg"])
+        trend_str = f"({'↑' if life_score.trend_delta > 0 else '↓' if life_score.trend_delta < 0 else '→'} {life_score.trend_delta:+.1f})"
+        score_color = COLORS["success"] if life_score.total >= 70 else COLORS["accent"] if life_score.total >= 50 else COLORS["danger"]
+        ax_score.text(0.5, 0.6, f"{life_score.total:.0f}/100", fontsize=48, fontweight="bold",
+                      ha="center", va="center", color=score_color)
+        ax_score.text(0.5, 0.15, trend_str, fontsize=16, ha="center", va="center",
+                      color=COLORS["success"] if life_score.trend_delta > 0 else COLORS["danger"] if life_score.trend_delta < 0 else COLORS["text"])
+        ax_score.set_xlim(0, 1)
+        ax_score.set_ylim(0, 1)
+        ax_score.axis("off")
+
+        # Dimension bars
+        ax_dims = fig.add_axes([0.1, 0.08, 0.8, 0.58])
+        ax_dims.set_facecolor(COLORS["bg"])
+
+        dims = life_score.dimensions
+        n = len(dims)
+        y_pos = np.arange(n)
+        scores = [d.score for d in dims]
+        bar_colors = [COLORS["success"] if s >= 70 else COLORS["accent"] if s >= 50 else COLORS["danger"] for s in scores]
+
+        bars = ax_dims.barh(y_pos, scores, color=bar_colors, alpha=0.8, height=0.6)
+        ax_dims.set_yticks(y_pos)
+        ax_dims.set_yticklabels([f"{d.emoji} {d.name}" for d in dims], fontsize=11)
+        ax_dims.set_xlim(0, 110)
+        ax_dims.invert_yaxis()
+
+        for i, (bar, dim) in enumerate(zip(bars, dims)):
+            ax_dims.text(bar.get_width() + 1, bar.get_y() + bar.get_height() / 2,
+                         f" {dim.score:.0f}% {dim.trend}", va="center", fontsize=10, color=COLORS["text"])
+
+        ax_dims.axvline(x=50, color=COLORS["grid"], linestyle="--", alpha=0.5)
+        ax_dims.grid(True, axis="x", alpha=0.2)
+        ax_dims.set_xlabel("Score (%)")
+
+        fig.tight_layout(rect=[0, 0, 1, 0.95])
+        return self._fig_to_bytes(fig)
+
+    # ── Anomaly Chart ────────────────────────────────────────────────────────
+
+    def anomaly_chart(self, records: list[DailyRecord], anomalies: list[Anomaly]) -> bytes:
+        days = sorted([r for r in records if not r.is_weekly_summary], key=lambda r: r.entry_date)
+        if not days:
+            return self._empty_chart("No data")
+
+        dates = [r.entry_date for r in days]
+        scores = [r.productivity_score for r in days]
+        avg = float(np.mean(scores))
+        stdev = float(np.std(scores)) if len(scores) > 1 else 10
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        fig.suptitle("Anomaly Detection", fontsize=14, fontweight="bold")
+
+        ax.fill_between(dates, scores, alpha=0.2, color=COLORS["primary"])
+        ax.plot(dates, scores, color=COLORS["primary"], linewidth=1.5, alpha=0.7)
+
+        # Highlight bands
+        ax.axhline(y=avg, color=COLORS["accent"], linestyle="--", alpha=0.7, label=f"Avg: {avg:.1f}")
+        ax.axhspan(avg + stdev * 1.5, 100, alpha=0.05, color=COLORS["success"])
+        ax.axhspan(0, avg - stdev * 1.5, alpha=0.05, color=COLORS["danger"])
+
+        # Mark anomalies
+        anomaly_dates = {a.entry_date for a in anomalies}
+        for r in days:
+            if r.entry_date in anomaly_dates:
+                color = COLORS["success"] if r.productivity_score > avg else COLORS["danger"]
+                ax.scatter([r.entry_date], [r.productivity_score], color=color, s=100,
+                           zorder=5, edgecolors="white", linewidths=1.5)
+                ax.annotate(r.entry_date.strftime("%d.%m"), (r.entry_date, r.productivity_score),
+                            textcoords="offset points", xytext=(0, 12), ha="center",
+                            fontsize=8, color=color)
+
+        ax.set_ylabel("Productivity Score")
+        ax.set_ylim(0, 100)
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d.%m"))
+        fig.autofmt_xdate()
         fig.tight_layout()
         return self._fig_to_bytes(fig)

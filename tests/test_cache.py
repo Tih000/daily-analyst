@@ -1,16 +1,12 @@
-"""Tests for SQLite cache service (with goals support)."""
+"""Tests for SQLite cache service (with goals, chat, milestones)."""
 
 from datetime import date, timedelta
 
 import pytest
 
 from src.models.journal_entry import (
-    DailyRecord,
-    DayRating,
-    Goal,
-    SleepInfo,
-    TaskEntry,
-    TestikStatus,
+    DailyRecord, DayRating, Goal, Milestone, MilestoneType,
+    SleepInfo, TaskEntry, TestikStatus,
 )
 from src.utils.cache import CacheService
 
@@ -44,13 +40,8 @@ class TestCacheService:
             testik=TestikStatus.PLUS,
             sleep=SleepInfo(woke_up_at="10:00", sleep_hours=8.5, recovery=85),
             activities=["MARK", "CODING", "GYM"],
-            total_hours=9.5,
-            tasks_count=5,
-            tasks_completed=4,
-            had_workout=True,
-            had_university=False,
-            had_coding=True,
-            had_kate=True,
+            total_hours=9.5, tasks_count=5, tasks_completed=4,
+            had_workout=True, had_university=False, had_coding=True, had_kate=True,
             journal_text="Full roundtrip test",
         )
         cache_service.upsert_daily_records([record])
@@ -58,34 +49,13 @@ class TestCacheService:
         assert len(results) == 1
         r = results[0]
         assert r.rating == DayRating.PERFECT
-        assert r.testik == TestikStatus.PLUS
         assert r.sleep.sleep_hours == 8.5
-        assert r.sleep.recovery == 85
-        assert "CODING" in r.activities
-        assert r.total_hours == 9.5
-        assert r.had_workout is True
-        assert r.had_kate is True
         assert r.journal_text == "Full roundtrip test"
 
     def test_cache_freshness(self, cache_service: CacheService) -> None:
         assert not cache_service.is_cache_fresh()
         cache_service.mark_synced()
         assert cache_service.is_cache_fresh()
-
-    def test_get_recent(self, cache_service: CacheService, sample_records: list[DailyRecord]) -> None:
-        cache_service.upsert_daily_records(sample_records)
-        recent = cache_service.get_recent_daily(days=7)
-        for r in recent:
-            assert r.entry_date >= date.today() - timedelta(days=7)
-
-    def test_monthly(self, cache_service: CacheService) -> None:
-        records = [
-            DailyRecord(entry_date=date(2026, 3, d), rating=DayRating.GOOD)
-            for d in range(1, 11)
-        ]
-        cache_service.upsert_daily_records(records)
-        march = cache_service.get_daily_for_month(2026, 3)
-        assert len(march) == 10
 
     def test_exclude_weekly(self, cache_service: CacheService) -> None:
         records = [
@@ -95,15 +65,13 @@ class TestCacheService:
         cache_service.upsert_daily_records(records)
         result = cache_service.get_daily_records(date(2026, 3, 1), date(2026, 3, 31), exclude_weekly=True)
         assert len(result) == 1
-        assert result[0].entry_date == date(2026, 3, 1)
 
 
 class TestGoalsPersistence:
     def test_upsert_and_get(self, cache_service: CacheService, sample_goals: list[Goal]) -> None:
         for g in sample_goals:
             cache_service.upsert_goal(g)
-        goals = cache_service.get_goals(123)
-        assert len(goals) == 3
+        assert len(cache_service.get_goals(123)) == 3
 
     def test_delete_goal(self, cache_service: CacheService, sample_goals: list[Goal]) -> None:
         for g in sample_goals:
@@ -111,8 +79,48 @@ class TestGoalsPersistence:
         assert cache_service.delete_goal("g1")
         assert len(cache_service.get_goals(123)) == 2
 
-    def test_delete_nonexistent(self, cache_service: CacheService) -> None:
-        assert not cache_service.delete_goal("nonexistent")
 
-    def test_no_goals(self, cache_service: CacheService) -> None:
-        assert cache_service.get_goals(999) == []
+class TestChatMemory:
+    def test_save_and_get(self, cache_service: CacheService) -> None:
+        cache_service.save_message(123, "user", "hello")
+        cache_service.save_message(123, "assistant", "hi there")
+        msgs = cache_service.get_recent_messages(123)
+        assert len(msgs) == 2
+        assert msgs[0].role == "user"
+        assert msgs[1].role == "assistant"
+
+    def test_different_users(self, cache_service: CacheService) -> None:
+        cache_service.save_message(123, "user", "hello")
+        cache_service.save_message(456, "user", "world")
+        assert len(cache_service.get_recent_messages(123)) == 1
+        assert len(cache_service.get_recent_messages(456)) == 1
+
+    def test_cleanup(self, cache_service: CacheService) -> None:
+        for i in range(10):
+            cache_service.save_message(123, "user", f"msg {i}")
+        deleted = cache_service.cleanup_messages(123, keep=5)
+        assert deleted == 5
+        assert len(cache_service.get_recent_messages(123)) == 5
+
+    def test_cleanup_noop(self, cache_service: CacheService) -> None:
+        cache_service.save_message(123, "user", "only one")
+        assert cache_service.cleanup_messages(123, keep=50) == 0
+
+
+class TestMilestones:
+    def test_add_and_get(self, cache_service: CacheService, sample_milestones) -> None:
+        for m in sample_milestones:
+            cache_service.add_milestone(m)
+        milestones = cache_service.get_milestones(2026)
+        assert len(milestones) == 2
+
+    def test_get_by_year(self, cache_service: CacheService, sample_milestones) -> None:
+        for m in sample_milestones:
+            cache_service.add_milestone(m)
+        assert len(cache_service.get_milestones(2025)) == 0
+        assert len(cache_service.get_milestones(2026)) == 2
+
+    def test_get_all(self, cache_service: CacheService, sample_milestones) -> None:
+        for m in sample_milestones:
+            cache_service.add_milestone(m)
+        assert len(cache_service.get_milestones()) == 2

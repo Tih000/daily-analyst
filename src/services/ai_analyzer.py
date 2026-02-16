@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import logging
 import statistics
+import uuid
 from collections import Counter
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Optional
 
 import openai
@@ -13,14 +14,20 @@ import openai
 from src.config import get_settings
 from src.models.journal_entry import (
     ActivityCorrelation,
+    Anomaly,
     BurnoutRisk,
+    ChatMessage,
     CorrelationMatrix,
     DailyRecord,
     DayRating,
     DaySummary,
     Goal,
     GoalProgress,
+    LifeDimension,
+    LifeScore,
     MetricDelta,
+    Milestone,
+    MilestoneType,
     MonthAnalysis,
     MonthComparison,
     StreakInfo,
@@ -31,21 +38,28 @@ logger = logging.getLogger(__name__)
 
 JOURNAL_TRUNCATE = 200
 
-SYSTEM_PROMPT = """Ты эксперт по продуктивности и личному анализу. Пользователь ведёт Notion-дневник с ежедневными MARK-записями.
+SYSTEM_PROMPT = """Ты Jarvis — персональный AI-ассистент по продуктивности и жизни. Пользователя зовут Тихон. Он ведёт Notion-дневник с ежедневными MARK-записями.
 
-КРИТИЧЕСКИ ВАЖНО: Поле journal_text — это ПОЛНАЯ картина дня пользователя, а не только структурированные метрики. В journal_text содержится весь текст дневника за день: мысли, эмоции, контекст, события, самочувствие. Ты ОБЯЗАН читать и анализировать весь этот текст, чтобы понимать контекст, настроение и паттерны жизни — не ограничивайся цифрами (рейтинг, часы, сон).
+КРИТИЧЕСКИ ВАЖНО: journal_text — это ПОЛНАЯ картина дня: мысли, эмоции, контекст, события, самочувствие. Ты ОБЯЗАН читать и анализировать весь текст для глубокого понимания жизни — не ограничивайся цифрами.
 
 Структура данных:
-- Активности: CODING, GYM, AI, UNIVERSITY, KATE, CRYPTO и др.
+- Активности: CODING, GYM, AI, UNIVERSITY, KATE, CRYPTO, FOOTBALL, TENNIS, PADEL и др.
 - TESTIK: PLUS = воздержание ✅, MINUS = мастурбация 🔴, MINUS_KATE = секс с девушкой 🟡
 - Оценка дня (MARK): perfect, very good, good, normal, bad, very bad
-- Сон: длительность, время подъёма, восстановление
+- Сон: длительность, время подъёма, восстановление (Apple Watch)
 
-Твоя задача:
-- Анализировать ПОЛНЫЙ текст дневника (journal_text) для понимания эмоций, контекста и причин оценок
-- Находить корреляции между сном, активностями, TESTIK и настроением
-- Давать конкретные рекомендации с цифрами
-- Отвечать на русском, кратко, с эмодзи и actionable insights"""
+Ты знаешь Тихона лично: его привычки, паттерны, что мотивирует и что разрушает продуктивность. Ты проактивен — не просто отвечаешь, а предлагаешь, предупреждаешь, подбадриваешь.
+
+Правила:
+- Анализируй ПОЛНЫЙ journal_text для контекста и эмоций
+- Давай конкретные рекомендации С ЦИФРАМИ из данных
+- Ссылайся на конкретные даты и события из истории
+- Отвечай на русском, кратко, с эмодзи
+- Будь как лучший друг + аналитик: честно, но с поддержкой"""
+
+CHAT_SYSTEM_PROMPT = SYSTEM_PROMPT + """
+
+Сейчас ты в режиме свободного чата. Пользователь может спросить что угодно о своей жизни, данных, паттернах. Отвечай естественно, как друг-аналитик. Используй данные дневника для подтверждения. Если пользователь расстроен — поддержи и предложи конкретный план действий на основе того, что работало раньше."""
 
 
 class AIAnalyzer:
@@ -778,6 +792,375 @@ class AIAnalyzer:
             result.append(GoalProgress(goal=g, current=current, target=target, percentage=min(pct, 100.0)))
 
         return result
+
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LEVEL 1: Proactive Intelligence
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def morning_briefing(self, records: list[DailyRecord]) -> str:
+        """Generate morning briefing with yesterday summary, streaks, prediction, recommendations."""
+        days = sorted(
+            [r for r in records if not r.is_weekly_summary],
+            key=lambda r: r.entry_date, reverse=True,
+        )
+        if not days:
+            return "📭 Нет данных для утреннего брифинга."
+
+        yesterday = days[0]
+        streaks = self.compute_streaks(days)
+        alerts = self.check_alerts(days[:14])
+
+        y_rating = yesterday.rating.emoji + " " + yesterday.rating.value if yesterday.rating else "N/A"
+        y_sleep = f"{yesterday.sleep.sleep_hours}ч" if yesterday.sleep.sleep_hours else "N/A"
+        y_testik = yesterday.testik.label if yesterday.testik else "N/A"
+        y_acts = ", ".join(a for a in yesterday.activities if a != "MARK") or "—"
+
+        streaks_text = "\n".join(
+            f"  {s.emoji} {s.name}: {s.current} дн. (рекорд: {s.record})"
+            for s in streaks if s.current > 0
+        )
+
+        alert_text = ""
+        if alerts:
+            alert_text = "\n⚠️ Внимание:\n" + "\n".join(f"  • {a}" for a in alerts)
+
+        # Sleep trend (last 3 days)
+        sleep_trend = ""
+        recent_sleep = [r.sleep.sleep_hours for r in days[:3] if r.sleep.sleep_hours]
+        if len(recent_sleep) >= 2:
+            trend = " → ".join(f"{s}ч" for s in recent_sleep)
+            if recent_sleep[0] < recent_sleep[-1]:
+                sleep_trend = f"\n📉 Тренд сна: {trend} (падает!)"
+
+        summary = self._records_to_summary(days[:7])
+        ai_advice = await self._ask_gpt(
+            f"Утренний брифинг. Последние 7 дней:\n{summary}\n\n"
+            "Дай 1-2 конкретных рекомендации на сегодня, основываясь на паттернах из journal_text. "
+            "Упомяни конкретные цифры и что работало в похожие дни. Кратко, 3-4 строки.",
+            max_tokens=400,
+        )
+
+        text = (
+            f"☀️ Доброе утро, Тихон!\n\n"
+            f"📊 *Вчера ({yesterday.entry_date}):*\n"
+            f"  {y_rating} | 😴 {y_sleep} | 🧪 {y_testik}\n"
+            f"  📋 {y_acts}\n"
+        )
+        if streaks_text:
+            text += f"\n🔥 *Серии:*\n{streaks_text}\n"
+        text += sleep_trend
+        text += f"\n💡 *Рекомендация:*\n{ai_advice}"
+        text += alert_text
+        return text
+
+    async def enhanced_alerts(self, records: list[DailyRecord]) -> list[str]:
+        """Enhanced smart alerts with pattern detection and historical context."""
+        alerts = self.check_alerts(records)
+        days = sorted(
+            [r for r in records if not r.is_weekly_summary],
+            key=lambda r: r.entry_date, reverse=True,
+        )
+        if len(days) < 3:
+            return alerts
+
+        # Rating dropping 3 days in a row
+        if len(days) >= 3:
+            last3_ratings = [d.rating.score for d in days[:3] if d.rating]
+            if len(last3_ratings) == 3 and last3_ratings[0] < last3_ratings[1] < last3_ratings[2]:
+                alerts.append(
+                    f"📉 Оценки падают 3 дня: {' → '.join(str(r) for r in reversed(last3_ratings))}/6"
+                )
+
+        # Anomalously few activities
+        if days[0].tasks_count <= 1 and days[0].tasks_count < statistics.mean([d.tasks_count for d in days[:7]]) * 0.3:
+            alerts.append("📋 Аномально мало активностей сегодня")
+
+        # Approaching burnout
+        risk = await self.predict_burnout(days[:14])
+        if risk.risk_score >= 60:
+            alerts.append(f"🔥 Приближаемся к выгоранию ({risk.risk_score:.0f}%)")
+
+        return alerts
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LEVEL 2: Deep Life Analytics
+    # ══════════════════════════════════════════════════════════════════════
+
+    def compute_life_score(self, records: list[DailyRecord]) -> LifeScore:
+        """Compute 6-dimension life score from recent records. Pure computation."""
+        days = sorted(
+            [r for r in records if not r.is_weekly_summary],
+            key=lambda r: r.entry_date, reverse=True,
+        )
+        if not days:
+            return LifeScore(total=0, dimensions=[])
+
+        recent = days[:14]
+        prev = days[14:28] if len(days) >= 28 else []
+        n = len(recent)
+
+        # 1. Productivity (based on scores)
+        prod_scores = [r.productivity_score for r in recent]
+        prod = round(statistics.mean(prod_scores), 1) if prod_scores else 0
+
+        # 2. Sleep (0-100 based on how close to 7-8h)
+        sleep_vals = [r.sleep.sleep_hours for r in recent if r.sleep.sleep_hours]
+        if sleep_vals:
+            avg_sleep = statistics.mean(sleep_vals)
+            sleep_sc = min(100, max(0, 100 - abs(avg_sleep - 7.5) * 20))
+        else:
+            sleep_sc = 50.0
+
+        # 3. Physical (workout rate * 100)
+        workout_rate = sum(1 for r in recent if r.had_workout) / n * 100
+
+        # 4. Relationships (kate days + rating on kate days)
+        kate_days = [r for r in recent if r.had_kate]
+        rel_sc = min(100, (len(kate_days) / n * 50) + (
+            statistics.mean([r.rating.score for r in kate_days if r.rating]) / 6 * 50
+            if kate_days and any(r.rating for r in kate_days) else 25
+        ))
+
+        # 5. TESTIK (plus rate)
+        plus_count = sum(1 for r in recent if r.testik == TestikStatus.PLUS)
+        testik_sc = plus_count / n * 100
+
+        # 6. Mood (rating score normalized)
+        ratings = [r.rating.score for r in recent if r.rating]
+        mood_sc = (statistics.mean(ratings) / 6 * 100) if ratings else 50.0
+
+        total = round(statistics.mean([prod, sleep_sc, workout_rate, rel_sc, testik_sc, mood_sc]), 1)
+
+        # Trend vs previous period
+        prev_total = 0.0
+        trend_weeks = 0
+        if prev:
+            prev_scores = [r.productivity_score for r in prev]
+            prev_total = round(statistics.mean(prev_scores), 1) if prev_scores else 0
+            if total > prev_total:
+                trend_weeks = 1
+
+        def trend_arrow(current: list[DailyRecord], previous: list[DailyRecord], fn) -> str:
+            if not previous:
+                return "→"
+            c = fn(current)
+            p = fn(previous)
+            return "↑" if c > p else "↓" if c < p else "→"
+
+        dims = [
+            LifeDimension(name="Продуктивность", emoji="🧠", score=round(prod, 1),
+                          trend=trend_arrow(recent, prev, lambda d: statistics.mean([r.productivity_score for r in d]))),
+            LifeDimension(name="Сон", emoji="😴", score=round(sleep_sc, 1),
+                          trend=trend_arrow(recent, prev, lambda d: statistics.mean([r.sleep.sleep_hours for r in d if r.sleep.sleep_hours] or [0]))),
+            LifeDimension(name="Физ. форма", emoji="🏋️", score=round(workout_rate, 1),
+                          trend=trend_arrow(recent, prev, lambda d: sum(1 for r in d if r.had_workout) / max(len(d), 1) * 100)),
+            LifeDimension(name="Отношения", emoji="💕", score=round(rel_sc, 1),
+                          trend=trend_arrow(recent, prev, lambda d: sum(1 for r in d if r.had_kate) / max(len(d), 1) * 100)),
+            LifeDimension(name="TESTIK", emoji="🧪", score=round(testik_sc, 1),
+                          trend=trend_arrow(recent, prev, lambda d: sum(1 for r in d if r.testik == TestikStatus.PLUS) / max(len(d), 1) * 100)),
+            LifeDimension(name="Настроение", emoji="😊", score=round(mood_sc, 1),
+                          trend=trend_arrow(recent, prev, lambda d: statistics.mean([r.rating.score for r in d if r.rating] or [3]) / 6 * 100)),
+        ]
+
+        return LifeScore(
+            total=total,
+            trend_delta=round(total - prev_total, 1),
+            dimensions=dims,
+            trend_weeks=trend_weeks,
+        )
+
+    async def formula(self, records: list[DailyRecord]) -> str:
+        """AI finds the personal formula for a perfect day."""
+        if len(records) < 7:
+            return "📭 Нужно минимум 7 дней данных."
+        summary = self._records_to_summary(records)
+        return await self._ask_gpt(
+            f"Данные дневника (читай journal_text!):\n{summary}\n\n"
+            "Выведи ПЕРСОНАЛЬНУЮ формулу идеального дня (rating >= 5) для Тихона.\n"
+            "Формат:\n"
+            "🧬 Твоя формула идеального дня (rating ≥ 5):\n"
+            "1. Сон X-Yч (корреляция: Z)\n"
+            "2. GYM (дни с GYM: avg X vs Y без)\n"
+            "3. CODING Xч (но не > Yч)\n"
+            "4. TESTIK PLUS (серия N+ = avg rating X)\n"
+            "5. ...\n"
+            "⚡ Если всё совпадает: X% шанс на GOOD+\n"
+            "📉 Если ничего: X% шанс\n\n"
+            "Используй РЕАЛЬНЫЕ цифры из данных. Не придумывай.",
+            max_tokens=800,
+        )
+
+    async def whatif(self, records: list[DailyRecord], scenario: str) -> str:
+        """What-if simulator: model scenario impact based on historical data."""
+        if not records:
+            return "📭 Нет данных."
+        summary = self._records_to_summary(records[-30:] if len(records) > 30 else records)
+        return await self._ask_gpt(
+            f"Данные за последний месяц:\n{summary}\n\n"
+            f"Пользователь спрашивает: /whatif {scenario}\n\n"
+            "Смоделируй этот сценарий на основе РЕАЛЬНЫХ исторических данных Тихона.\n"
+            "Формат:\n"
+            "🔮 Прогноз: [что произойдёт с конкретными метриками]\n"
+            "📊 Основано на: [конкретные примеры из данных]\n"
+            "💡 Рекомендация: [что делать]\n\n"
+            "Используй реальные цифры из данных, не придумывай.",
+            max_tokens=600,
+        )
+
+    def detect_anomalies(self, records: list[DailyRecord]) -> list[Anomaly]:
+        """Detect statistically unusual days (high and low outliers)."""
+        days = sorted(
+            [r for r in records if not r.is_weekly_summary],
+            key=lambda r: r.entry_date,
+        )
+        if len(days) < 7:
+            return []
+
+        scores = [r.productivity_score for r in days]
+        avg = statistics.mean(scores)
+        stdev = statistics.stdev(scores) if len(scores) > 1 else 10
+
+        anomalies: list[Anomaly] = []
+        for r in days:
+            deviation = abs(r.productivity_score - avg)
+            if deviation > stdev * 1.5:
+                direction = "high" if r.productivity_score > avg else "low"
+                anomalies.append(Anomaly(
+                    entry_date=r.entry_date,
+                    score=r.productivity_score,
+                    avg_score=round(avg, 1),
+                    direction=direction,
+                    activities=[a for a in r.activities if a != "MARK"],
+                ))
+
+        anomalies.sort(key=lambda a: abs(a.score - a.avg_score), reverse=True)
+        return anomalies[:10]
+
+    async def explain_anomalies(self, records: list[DailyRecord]) -> str:
+        """Detect anomalies and ask GPT to explain them."""
+        anomalies = self.detect_anomalies(records)
+        if not anomalies:
+            return "✅ Нет значимых аномалий за последний период."
+
+        anomaly_text = "\n".join(
+            f"{'📈' if a.direction == 'high' else '📉'} {a.entry_date}: score={a.score} "
+            f"(avg={a.avg_score}), activities={a.activities}"
+            for a in anomalies[:5]
+        )
+
+        summary = self._records_to_summary(records[-30:] if len(records) > 30 else records)
+        return await self._ask_gpt(
+            f"Аномальные дни:\n{anomaly_text}\n\nДанные (journal):\n{summary}\n\n"
+            "Для каждой аномалии объясни ПОЧЕМУ на основе journal_text и паттернов. "
+            "Также найди повторяющиеся паттерны (день недели, после определённых событий). "
+            "Кратко, с эмодзи.",
+            max_tokens=800,
+        )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LEVEL 3: Conversational AI (free-chat)
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def free_chat(
+        self,
+        user_message: str,
+        records: list[DailyRecord],
+        chat_history: list[ChatMessage],
+    ) -> str:
+        """Handle free-form text message with full context."""
+        summary = self._records_to_summary(records[-14:] if len(records) > 14 else records)
+
+        history_msgs: list[dict[str, str]] = [
+            {"role": "system", "content": CHAT_SYSTEM_PROMPT},
+        ]
+
+        # Add data context
+        history_msgs.append({
+            "role": "system",
+            "content": f"Данные дневника (последние 14 дней):\n{summary}",
+        })
+
+        # Add conversation history (last 10 messages for context)
+        for msg in chat_history[-10:]:
+            history_msgs.append({"role": msg.role, "content": msg.content})
+
+        # Add current message
+        history_msgs.append({"role": "user", "content": user_message})
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=history_msgs,
+                max_tokens=1000,
+                temperature=0.8,
+            )
+            return response.choices[0].message.content or ""
+        except Exception as e:
+            logger.error("Free chat GPT error: %s", e)
+            return f"⚠️ Ошибка AI: {e}"
+
+    # ══════════════════════════════════════════════════════════════════════
+    # LEVEL 5: Memory & Milestones
+    # ══════════════════════════════════════════════════════════════════════
+
+    def detect_milestones(self, records: list[DailyRecord]) -> list[Milestone]:
+        """Auto-detect significant life events from records."""
+        days = sorted(
+            [r for r in records if not r.is_weekly_summary],
+            key=lambda r: r.entry_date,
+        )
+        if not days:
+            return []
+
+        milestones: list[Milestone] = []
+
+        # Worst burnout (lowest score day)
+        worst = min(days, key=lambda r: r.productivity_score)
+        if worst.productivity_score < 25:
+            milestones.append(Milestone(
+                id=f"burn-{worst.entry_date}", entry_date=worst.entry_date,
+                milestone_type=MilestoneType.BURNOUT, emoji="🔴",
+                title=f"Худший burnout (score {worst.productivity_score})",
+                score=worst.productivity_score,
+            ))
+
+        # Best day
+        best = max(days, key=lambda r: r.productivity_score)
+        if best.productivity_score > 75:
+            milestones.append(Milestone(
+                id=f"best-{best.entry_date}", entry_date=best.entry_date,
+                milestone_type=MilestoneType.RECORD, emoji="🟢",
+                title=f"Лучший день (score {best.productivity_score})",
+                score=best.productivity_score,
+            ))
+
+        # TESTIK PLUS record streaks
+        streaks = self.compute_streaks(days)
+        for s in streaks:
+            if s.record >= 5 and s.name == "TESTIK PLUS":
+                milestones.append(Milestone(
+                    id=f"streak-{s.name}-{s.record}", entry_date=s.last_date or days[-1].entry_date,
+                    milestone_type=MilestoneType.STREAK, emoji="🟢",
+                    title=f"Рекорд: {s.name} {s.record} дней подряд",
+                    score=float(s.record),
+                ))
+
+        # Perfect week (7 days with avg rating >= 4)
+        for i in range(len(days) - 6):
+            week = days[i:i + 7]
+            ratings = [r.rating.score for r in week if r.rating]
+            if len(ratings) == 7 and statistics.mean(ratings) >= 4:
+                milestones.append(Milestone(
+                    id=f"pw-{week[0].entry_date}", entry_date=week[0].entry_date,
+                    milestone_type=MilestoneType.PERFECT_WEEK, emoji="🟢",
+                    title=f"Perfect Week (avg {statistics.mean(ratings):.1f}/6)",
+                    score=round(statistics.mean(ratings), 1),
+                ))
+                break  # only first one
+
+        milestones.sort(key=lambda m: m.entry_date, reverse=True)
+        return milestones
 
 
 def _goal_activity_matches(record: DailyRecord, activity: str) -> bool:

@@ -261,3 +261,71 @@ class CorrelationMatrix(BaseModel):
     correlations: list[ActivityCorrelation]
     combo_insights: list[str] = Field(default_factory=list)
     ai_insights: str = ""
+
+
+# ── Life Score ──────────────────────────────────────────────────────────────
+
+
+class LifeDimension(BaseModel):
+    name: str
+    emoji: str
+    score: float  # 0-100
+    trend: str = "→"  # ↑ / ↓ / →
+
+    @property
+    def bar(self) -> str:
+        filled = round(self.score / 100 * 10)
+        return "█" * filled + "░" * (10 - filled)
+
+
+class LifeScore(BaseModel):
+    total: float  # 0-100
+    trend_delta: float = 0  # vs previous period
+    dimensions: list[LifeDimension] = Field(default_factory=list)
+    trend_weeks: int = 0  # weeks of improvement
+
+
+# ── Anomaly ─────────────────────────────────────────────────────────────────
+
+
+class Anomaly(BaseModel):
+    entry_date: date
+    score: float
+    avg_score: float
+    direction: str  # "high" or "low"
+    activities: list[str]
+    explanation: str = ""
+
+
+# ── Chat Memory ─────────────────────────────────────────────────────────────
+
+
+class ChatMessage(BaseModel):
+    id: str
+    user_id: int
+    role: str  # "user" or "assistant"
+    content: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ── Milestone ───────────────────────────────────────────────────────────────
+
+
+class MilestoneType(str, Enum):
+    RECORD = "record"
+    BURNOUT = "burnout"
+    STREAK = "streak"
+    PERFECT_WEEK = "perfect_week"
+    BEST_MONTH = "best_month"
+    LEVEL_UP = "level_up"
+    CUSTOM = "custom"
+
+
+class Milestone(BaseModel):
+    id: str
+    entry_date: date
+    milestone_type: MilestoneType
+    emoji: str
+    title: str
+    description: str = ""
+    score: Optional[float] = None

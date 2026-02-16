@@ -1,19 +1,23 @@
-"""SQLite local cache for task entries, daily records, and goals."""
+"""SQLite local cache for task entries, daily records, goals, chat memory, and milestones."""
 
 from __future__ import annotations
 
 import json
 import logging
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Generator, Optional
 
 from src.models.journal_entry import (
+    ChatMessage,
     DailyRecord,
     DayRating,
     Goal,
+    Milestone,
+    MilestoneType,
     SleepInfo,
     TaskEntry,
     TestikStatus,
@@ -92,6 +96,28 @@ class CacheService:
                     updated_at TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chat_messages (
+                    id TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TEXT NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_user ON chat_messages(user_id, timestamp)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS milestones (
+                    id TEXT PRIMARY KEY,
+                    entry_date TEXT NOT NULL,
+                    milestone_type TEXT NOT NULL,
+                    emoji TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    score REAL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_milestone_date ON milestones(entry_date)")
             conn.commit()
 
     # ── Cache freshness ─────────────────────────────────────────────────────
@@ -222,6 +248,85 @@ class CacheService:
             cursor = conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
             conn.commit()
             return cursor.rowcount > 0
+
+    # ── Chat memory ──────────────────────────────────────────────────────────
+
+    def save_message(self, user_id: int, role: str, content: str) -> str:
+        msg_id = str(uuid.uuid4())[:12]
+        with _get_connection() as conn:
+            conn.execute(
+                "INSERT INTO chat_messages (id, user_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (msg_id, user_id, role, content, datetime.utcnow().isoformat()),
+            )
+            conn.commit()
+        return msg_id
+
+    def get_recent_messages(self, user_id: int, limit: int = 20) -> list[ChatMessage]:
+        with _get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        return [
+            ChatMessage(
+                id=r["id"], user_id=r["user_id"], role=r["role"],
+                content=r["content"], timestamp=datetime.fromisoformat(r["timestamp"]),
+            )
+            for r in reversed(rows)
+        ]
+
+    def cleanup_messages(self, user_id: int, keep: int = 50) -> int:
+        with _get_connection() as conn:
+            total = conn.execute(
+                "SELECT COUNT(*) as cnt FROM chat_messages WHERE user_id = ?", (user_id,)
+            ).fetchone()["cnt"]
+            if total <= keep:
+                return 0
+            to_delete = total - keep
+            deleted = conn.execute(
+                """DELETE FROM chat_messages WHERE id IN (
+                    SELECT id FROM chat_messages WHERE user_id = ?
+                    ORDER BY timestamp ASC LIMIT ?
+                )""",
+                (user_id, to_delete),
+            ).rowcount
+            conn.commit()
+            return deleted
+
+    # ── Milestones ──────────────────────────────────────────────────────────
+
+    def add_milestone(self, milestone: Milestone) -> None:
+        with _get_connection() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO milestones
+                   (id, entry_date, milestone_type, emoji, title, description, score)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (milestone.id, milestone.entry_date.isoformat(),
+                 milestone.milestone_type.value, milestone.emoji,
+                 milestone.title, milestone.description, milestone.score),
+            )
+            conn.commit()
+
+    def get_milestones(self, year: Optional[int] = None) -> list[Milestone]:
+        with _get_connection() as conn:
+            if year:
+                rows = conn.execute(
+                    "SELECT * FROM milestones WHERE entry_date LIKE ? ORDER BY entry_date DESC",
+                    (f"{year}-%",),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM milestones ORDER BY entry_date DESC"
+                ).fetchall()
+        return [
+            Milestone(
+                id=r["id"], entry_date=date.fromisoformat(r["entry_date"]),
+                milestone_type=MilestoneType(r["milestone_type"]),
+                emoji=r["emoji"], title=r["title"],
+                description=r["description"] or "", score=r["score"],
+            )
+            for r in rows
+        ]
 
     # ── Cleanup ─────────────────────────────────────────────────────────────
 

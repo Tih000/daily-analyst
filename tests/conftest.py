@@ -15,7 +15,8 @@ os.environ.setdefault("NOTION_DATABASE_ID", "test-db")
 os.environ.setdefault("APP_ENV", "testing")
 
 from src.models.journal_entry import (
-    DailyRecord, DayRating, Goal, SleepInfo, TaskEntry, TestikStatus,
+    ChatMessage, DailyRecord, DayRating, Goal, Milestone, MilestoneType,
+    SleepInfo, TaskEntry, TestikStatus,
 )
 from src.utils.cache import CacheService
 
@@ -96,6 +97,16 @@ def sample_goals() -> list[Goal]:
 
 
 @pytest.fixture
+def sample_milestones() -> list[Milestone]:
+    return [
+        Milestone(id="m1", entry_date=date(2026, 1, 15), milestone_type=MilestoneType.BURNOUT,
+                  emoji="🔴", title="Worst burnout", score=15.0),
+        Milestone(id="m2", entry_date=date(2026, 2, 1), milestone_type=MilestoneType.RECORD,
+                  emoji="🟢", title="Best day ever", score=95.0),
+    ]
+
+
+@pytest.fixture
 def cache_service(tmp_path) -> Generator[CacheService, None, None]:
     import src.utils.cache as cache_module
     original = cache_module.DB_PATH
@@ -103,23 +114,3 @@ def cache_service(tmp_path) -> Generator[CacheService, None, None]:
     svc = CacheService(ttl_seconds=60)
     yield svc
     cache_module.DB_PATH = original
-
-
-@pytest.fixture
-def mock_notion_response() -> list[dict]:
-    return [
-        {"id": "p1", "properties": {
-            "Name": {"type": "title", "title": [{"plain_text": "MARK"}]},
-            "Date": {"date": {"start": "2026-02-15"}},
-            "Tags": {"multi_select": [{"name": "MARK"}]},
-            "Checkbox": {"checkbox": True},
-            "It took (hours)": {"number": None},
-        }},
-        {"id": "p2", "properties": {
-            "Name": {"type": "title", "title": [{"plain_text": "GYM"}]},
-            "Date": {"date": {"start": "2026-02-15"}},
-            "Tags": {"multi_select": [{"name": "GYM"}]},
-            "Checkbox": {"checkbox": True},
-            "It took (hours)": {"number": 1.5},
-        }},
-    ]
