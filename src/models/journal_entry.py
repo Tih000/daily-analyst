@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -186,7 +186,7 @@ class Goal(BaseModel):
     target_activity: str
     target_count: int
     period: str = "week"  # "week" or "month"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
     def label(self) -> str:
@@ -305,7 +305,7 @@ class ChatMessage(BaseModel):
     user_id: int
     role: str  # "user" or "assistant"
     content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ── Milestone ───────────────────────────────────────────────────────────────

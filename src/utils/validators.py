@@ -204,8 +204,8 @@ def sanitize_command_arg(text: str) -> str:
     return parts[1].strip() if len(parts) > 1 else ""
 
 
-def validate_user_id(user_id: int, allowed_ids: list[int]) -> bool:
-    """Check if user is authorized. Empty list = allow all."""
+def validate_user_id(user_id: int, allowed_ids: frozenset[int] | set[int] | list[int]) -> bool:
+    """Check if user is authorized. Empty collection = allow all."""
     if not allowed_ids:
         return True
     return user_id in allowed_ids

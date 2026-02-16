@@ -499,6 +499,7 @@ class ChartsService:
             ax_spark.set_xticks(x[::step])
             ax_spark.set_xticklabels([days_sorted[i].entry_date.strftime("%d.%m") for i in range(0, len(x), step)])
         else:
+            ax_spark.set_xticks(x)
             ax_spark.set_xticklabels([d.entry_date.strftime("%d.%m") for d in days_sorted])
         fig.tight_layout(rect=[0, 0, 1, 0.96])
         return self._fig_to_bytes(fig)

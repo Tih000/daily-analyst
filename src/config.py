@@ -22,6 +22,8 @@ def _frozenset_from_env(key: str) -> frozenset[int]:
 @dataclass(frozen=True)
 class TelegramConfig:
     bot_token: str = field(default_factory=lambda: os.environ["TELEGRAM_BOT_TOKEN"])
+    webhook_url: str = field(default_factory=lambda: os.getenv("TELEGRAM_WEBHOOK_URL", ""))
+    webhook_secret: str = field(default_factory=lambda: os.getenv("TELEGRAM_WEBHOOK_SECRET", ""))
     allowed_user_ids: frozenset[int] = field(
         default_factory=lambda: _frozenset_from_env("ALLOWED_USER_IDS")
     )

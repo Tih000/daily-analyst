@@ -20,11 +20,16 @@ env/
 
 # Environment
 .env
-.env.example
+!.env.example
 
 # Data / Cache
 data/
 *.db
+backups/
+
+# SSL certificates (generated on server)
+nginx/certbot/
+nginx/nginx-temp.conf
 
 # Testing / Linting
 .pytest_cache/

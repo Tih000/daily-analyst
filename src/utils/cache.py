@@ -1,4 +1,8 @@
-"""SQLite local cache for task entries, daily records, goals, chat memory, and milestones."""
+"""SQLite local cache for task entries, daily records, goals, chat memory, and milestones.
+
+All public methods are synchronous. In async code, call them via
+``await asyncio.to_thread(cache.method, ...)``.
+"""
 
 from __future__ import annotations
 
@@ -7,7 +11,7 @@ import logging
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Generator, Optional
 
@@ -129,11 +133,11 @@ class CacheService:
             ).fetchone()
             if not row:
                 return False
-            updated_at = datetime.fromisoformat(row["updated_at"])
-            return (datetime.utcnow() - updated_at).total_seconds() < self.ttl_seconds
+            updated_at = datetime.fromisoformat(row["updated_at"]).replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - updated_at).total_seconds() < self.ttl_seconds
 
     def mark_synced(self) -> None:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         with _get_connection() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO cache_metadata (key, value, updated_at) VALUES ('last_sync', ?, ?)",
@@ -151,7 +155,7 @@ class CacheService:
                        (id, title, entry_date, tags, checkbox, hours, body_text, cached_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     (t.id, t.title, t.entry_date.isoformat(), json.dumps(t.tags),
-                     int(t.checkbox), t.hours, t.body_text, datetime.utcnow().isoformat()),
+                     int(t.checkbox), t.hours, t.body_text, datetime.now(timezone.utc).isoformat()),
                 )
             conn.commit()
         return len(tasks)
@@ -189,7 +193,7 @@ class CacheService:
                      int(r.had_workout), int(r.had_university),
                      int(r.had_coding), int(r.had_kate),
                      r.journal_text, int(r.is_weekly_summary),
-                     datetime.utcnow().isoformat()),
+                     datetime.now(timezone.utc).isoformat()),
                 )
             conn.commit()
         return len(records)
@@ -256,7 +260,7 @@ class CacheService:
         with _get_connection() as conn:
             conn.execute(
                 "INSERT INTO chat_messages (id, user_id, role, content, timestamp) VALUES (?, ?, ?, ?, ?)",
-                (msg_id, user_id, role, content, datetime.utcnow().isoformat()),
+                (msg_id, user_id, role, content, datetime.now(timezone.utc).isoformat()),
             )
             conn.commit()
         return msg_id

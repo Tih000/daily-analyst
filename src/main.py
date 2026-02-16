@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import hmac
 import io
 import logging
 import sys
@@ -10,12 +12,12 @@ import time
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator
 
 import uvicorn
 from fastapi import FastAPI, Request, Response, status
-from telegram import Bot, Update
+from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from src.config import get_settings
@@ -25,7 +27,6 @@ from src.services.charts_service import ChartsService
 from src.services.notion_service import NotionService
 from src.utils.cache import CacheService
 from src.utils.validators import (
-    format_number,
     format_percentage,
     parse_compare_args,
     parse_goal_arg,
@@ -72,6 +73,7 @@ bot_app = Application.builder().token(settings.telegram.bot_token).build()
 # ── Auth decorator ──────────────────────────────────────────────────────────
 
 def authorized(func):
+    @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.effective_user or not update.message:
             return
@@ -97,7 +99,8 @@ def authorized(func):
 
 @authorized
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     text = (
         "👋 *Привет! Я Jarvis — твой AI Дневник-Аналитик*\n\n"
         "Я читаю весь твой Notion-дневник и вижу полную картину жизни.\n"
@@ -131,7 +134,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @authorized
 async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🔄 Загружаю данные из Notion...")
     arg = sanitize_command_arg(update.message.text or "")
     try:
@@ -175,7 +179,8 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 @authorized
 async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🔮 Оцениваю риск...")
     records = await notion_service.get_recent(30)
     risk = await ai_analyzer.predict_burnout(records)
@@ -191,7 +196,8 @@ async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 @authorized
 async def cmd_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     arg = sanitize_command_arg(update.message.text or "")
     try:
         y, m = parse_month_arg(arg)
@@ -214,7 +220,8 @@ async def cmd_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @authorized
 async def cmd_optimal_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("⏰ Анализирую...")
     records = await notion_service.get_recent(60)
     result = await ai_analyzer.optimal_hours(records)
@@ -223,7 +230,8 @@ async def cmd_optimal_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 @authorized
 async def cmd_kate_impact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("💕 Анализирую...")
     records = await notion_service.get_recent(90)
     await update.message.reply_text(truncate_text(f"💕 *Kate Impact*\n\n{await ai_analyzer.kate_impact(records)}"), parse_mode="Markdown")
@@ -231,7 +239,8 @@ async def cmd_kate_impact(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 @authorized
 async def cmd_testik_patterns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🧪 Анализирую...")
     records = await notion_service.get_recent(90)
     await update.message.reply_text(truncate_text(f"🧪 *TESTIK*\n\n{await ai_analyzer.testik_patterns(records)}"), parse_mode="Markdown")
@@ -241,7 +250,8 @@ async def cmd_testik_patterns(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @authorized
 async def cmd_sleep_optimizer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("😴 Анализирую...")
     records = await notion_service.get_recent(60)
     await update.message.reply_text(truncate_text(f"😴 *Сон*\n\n{await ai_analyzer.sleep_optimizer(records)}"), parse_mode="Markdown")
@@ -251,7 +261,8 @@ async def cmd_sleep_optimizer(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 @authorized
 async def cmd_money_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("💼 Анализирую...")
     records = await notion_service.get_recent(90)
     await update.message.reply_text(truncate_text(f"💼 *Работа*\n\n{await ai_analyzer.money_forecast(records)}"), parse_mode="Markdown")
@@ -259,7 +270,8 @@ async def cmd_money_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @authorized
 async def cmd_weak_spots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🔍 Ищу...")
     records = await notion_service.get_recent(30)
     await update.message.reply_text(truncate_text(f"🔍 *Слабые места*\n\n{await ai_analyzer.weak_spots(records)}"), parse_mode="Markdown")
@@ -267,7 +279,8 @@ async def cmd_weak_spots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 @authorized
 async def cmd_tomorrow_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🔮 Предсказываю...")
     records = await notion_service.get_recent(14)
     await update.message.reply_text(truncate_text(f"🔮 *Прогноз*\n\n{await ai_analyzer.tomorrow_mood(records)}"), parse_mode="Markdown")
@@ -279,7 +292,8 @@ async def cmd_tomorrow_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 @authorized
 async def cmd_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     records = await notion_service.get_recent(90)
     streaks = ai_analyzer.compute_streaks(records)
     if not streaks:
@@ -294,7 +308,8 @@ async def cmd_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 @authorized
 async def cmd_compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     arg = sanitize_command_arg(update.message.text or "")
     try:
         (y1, m1), (y2, m2) = parse_compare_args(arg)
@@ -317,7 +332,8 @@ async def cmd_compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 @authorized
 async def cmd_correlations(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🔗 Считаю корреляции...")
     records = await notion_service.get_recent(90)
     corr = await ai_analyzer.compute_correlations(records)
@@ -336,7 +352,8 @@ async def cmd_correlations(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 @authorized
 async def cmd_day_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🏷️ Классифицирую дни...")
     records = await notion_service.get_recent(90)
     result = await ai_analyzer.classify_day_types(records)
@@ -345,7 +362,8 @@ async def cmd_day_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @authorized
 async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     arg = sanitize_command_arg(update.message.text or "")
     try:
         y, m = parse_month_arg(arg)
@@ -362,7 +380,8 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 @authorized
 async def cmd_habits(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     arg = sanitize_command_arg(update.message.text or "").strip()
     if not arg:
         await update.message.reply_text(
@@ -376,7 +395,8 @@ async def cmd_habits(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 @authorized
 async def cmd_set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     arg = sanitize_command_arg(update.message.text or "")
     try:
         activity, count, period = parse_goal_arg(arg)
@@ -394,7 +414,8 @@ async def cmd_set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 @authorized
 async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     uid = update.effective_user.id  # type: ignore
     goals = cache_service.get_goals(uid)
     if not goals:
@@ -417,7 +438,8 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 @authorized
 async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("📊 Считаю Life Score...")
     records = await notion_service.get_recent(30)
     life = ai_analyzer.compute_life_score(records)
@@ -438,7 +460,8 @@ async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @authorized
 async def cmd_formula(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🧬 Вычисляю формулу...")
     records = await notion_service.get_recent(90)
     result = await ai_analyzer.formula(records)
@@ -449,7 +472,8 @@ async def cmd_formula(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 @authorized
 async def cmd_whatif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     arg = sanitize_command_arg(update.message.text or "").strip()
     if not arg:
         await update.message.reply_text(
@@ -469,7 +493,8 @@ async def cmd_whatif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 @authorized
 async def cmd_anomalies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     await update.message.reply_text("🔍 Ищу аномалии...")
     records = await notion_service.get_recent(60)
     anomalies = ai_analyzer.detect_anomalies(records)
@@ -485,12 +510,13 @@ async def cmd_anomalies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 @authorized
 async def cmd_milestones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message
+    if not update.message:
+        return
     records = await notion_service.get_recent(365)
     milestones = ai_analyzer.detect_milestones(records)
 
     # Also load saved ones
-    saved = cache_service.get_milestones(datetime.utcnow().year)
+    saved = cache_service.get_milestones(datetime.now(timezone.utc).year)
     seen_ids = {m.id for m in milestones}
     for s in saved:
         if s.id not in seen_ids:
@@ -506,7 +532,7 @@ async def cmd_milestones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("📭 Нет значимых вех пока.")
         return
 
-    text = f"📌 *Milestones {datetime.utcnow().year}*\n\n"
+    text = f"📌 *Milestones {datetime.now(timezone.utc).year}*\n\n"
     for m in milestones[:15]:
         text += f"{m.emoji} *{m.entry_date}* — {m.title}\n"
         if m.description:
@@ -520,7 +546,8 @@ async def cmd_milestones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 @authorized
 async def handle_free_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    assert update.message and update.message.text
+    if not update.message or not update.message.text:
+        return
     uid = update.effective_user.id  # type: ignore
     user_text = update.message.text.strip()
 
@@ -572,17 +599,18 @@ bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_
 # ═══════════════════════════════════════════════════════════════════════════
 
 _last_briefing_date: str = ""
+_last_alert_key: str = ""
 _last_digest_date: str = ""
 
 
 async def _background_loop() -> None:
     """Runs every 30 minutes: morning briefing (9:00), alerts (6h), weekly digest (Sun 18:00)."""
-    global _last_briefing_date, _last_digest_date
+    global _last_briefing_date, _last_alert_key, _last_digest_date
     await asyncio.sleep(30)
 
     while True:
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             today_str = now.strftime("%Y-%m-%d")
             uids = list(settings.telegram.allowed_user_ids)
 
@@ -600,8 +628,10 @@ async def _background_loop() -> None:
                 except Exception as e:
                     logger.error("Morning briefing error: %s", e, exc_info=True)
 
-            # Enhanced alerts: every 6 hours
-            if now.hour in (0, 6, 12, 18) and now.minute < 35:
+            # Enhanced alerts: every 6 hours (deduplicated by date+hour key)
+            alert_key = f"{today_str}-{now.hour // 6}"
+            if now.hour in (0, 6, 12, 18) and now.minute < 35 and _last_alert_key != alert_key:
+                _last_alert_key = alert_key
                 try:
                     records = await notion_service.get_recent(14, force_refresh=True)
                     alerts = await ai_analyzer.enhanced_alerts(records)
@@ -635,7 +665,7 @@ async def _background_loop() -> None:
         except Exception as e:
             logger.error("Background loop error: %s", e, exc_info=True)
 
-        await asyncio.sleep(30 * 60)  # every 30 minutes
+        await asyncio.sleep(30 * 60)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -649,7 +679,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     webhook_url = settings.telegram.webhook_url
     if webhook_url:
-        await bot_app.bot.set_webhook(url=webhook_url)
+        kwargs: dict[str, object] = {"url": webhook_url}
+        if settings.telegram.webhook_secret:
+            kwargs["secret_token"] = settings.telegram.webhook_secret
+        await bot_app.bot.set_webhook(**kwargs)
         logger.info("Webhook → %s", webhook_url)
 
     bg_task = asyncio.create_task(_background_loop())
@@ -666,11 +699,19 @@ app = FastAPI(title="Jarvis — Daily Analyst", version="3.0.0", lifespan=lifesp
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "ts": datetime.utcnow().isoformat()}
+    return {"status": "ok", "ts": datetime.now(timezone.utc).isoformat()}
 
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request) -> Response:
+    # Verify webhook secret if configured
+    webhook_secret = settings.telegram.webhook_secret
+    if webhook_secret:
+        token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not hmac.compare_digest(token, webhook_secret):
+            logger.warning("Webhook: invalid secret token from %s", request.client)
+            return Response(status_code=status.HTTP_403_FORBIDDEN)
+
     try:
         data = await request.json()
         update = Update.de_json(data, bot_app.bot)
@@ -683,7 +724,7 @@ async def telegram_webhook(request: Request) -> Response:
 @app.get("/sync")
 async def manual_sync() -> dict[str, object]:
     count = await notion_service.sync_all()
-    return {"synced_days": count, "ts": datetime.utcnow().isoformat()}
+    return {"synced_days": count, "ts": datetime.now(timezone.utc).isoformat()}
 
 
 if __name__ == "__main__":
