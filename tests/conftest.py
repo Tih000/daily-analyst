@@ -1,32 +1,27 @@
-"""Shared pytest fixtures for all test modules."""
+"""Shared pytest fixtures."""
 
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Generator
 
 import pytest
 
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token-123")
-os.environ.setdefault("OPENAI_API_KEY", "sk-test-key-456")
-os.environ.setdefault("NOTION_TOKEN", "secret_test_notion_token")
-os.environ.setdefault("NOTION_DATABASE_ID", "test-db-id-789")
+os.environ.setdefault("OPENAI_API_KEY", "test-key-456")
+os.environ.setdefault("NOTION_TOKEN", "secret_test")
+os.environ.setdefault("NOTION_DATABASE_ID", "test-db")
 os.environ.setdefault("APP_ENV", "testing")
 
 from src.models.journal_entry import (
-    DailyRecord,
-    DayRating,
-    SleepInfo,
-    TaskEntry,
-    TestikStatus,
+    DailyRecord, DayRating, Goal, SleepInfo, TaskEntry, TestikStatus,
 )
 from src.utils.cache import CacheService
 
 
 @pytest.fixture
 def sample_records() -> list[DailyRecord]:
-    """Generate 14 days of sample daily records."""
     ratings = [
         DayRating.PERFECT, DayRating.GOOD, DayRating.GOOD, DayRating.NORMAL,
         DayRating.NORMAL, DayRating.BAD, DayRating.GOOD, DayRating.PERFECT,
@@ -55,14 +50,13 @@ def sample_records() -> list[DailyRecord]:
             had_university=i % 3 == 0,
             had_coding=i % 2 == 0,
             had_kate=i % 5 == 0,
-            journal_text=f"Woke up at 10:00. Sleep time 7:30. Recovery 80.\nDay {i} notes.",
+            journal_text=f"Woke up at 10:00. Sleep time 7:30. Recovery 80.\nPLUS TESTIK\nDay {i} notes.\nMARK: good",
         ))
     return records
 
 
 @pytest.fixture
 def burnout_records() -> list[DailyRecord]:
-    """Records that should trigger high burnout risk."""
     records: list[DailyRecord] = []
     for i in range(7):
         records.append(DailyRecord(
@@ -72,12 +66,8 @@ def burnout_records() -> list[DailyRecord]:
             sleep=SleepInfo(sleep_hours=5.0 - i * 0.2),
             activities=["MARK", "CODING"],
             total_hours=11.0 + i * 0.5,
-            tasks_count=2,
-            tasks_completed=1,
-            had_workout=False,
-            had_university=False,
-            had_coding=True,
-            had_kate=False,
+            tasks_count=2, tasks_completed=1,
+            had_workout=False, had_coding=True,
             journal_text="MINUS TESTIK\nMARK: bad",
         ))
     return records
@@ -85,71 +75,51 @@ def burnout_records() -> list[DailyRecord]:
 
 @pytest.fixture
 def sample_tasks() -> list[TaskEntry]:
-    """Sample task entries for testing."""
     return [
-        TaskEntry(
-            id="task-001", title="MARK",
-            entry_date=date(2026, 2, 15),
-            tags=["MARK"], checkbox=True, hours=None,
-            body_text="Woke up at 12:30. Sleep time 8:54. Recovery 81 by Apple Watch\nMINUS TESTIK KATE\nMARK: good",
-        ),
-        TaskEntry(
-            id="task-002", title="GYM",
-            entry_date=date(2026, 2, 15),
-            tags=["GYM"], checkbox=True, hours=1.5,
-            body_text="",
-        ),
-        TaskEntry(
-            id="task-003", title="CODING",
-            entry_date=date(2026, 2, 15),
-            tags=["CODING"], checkbox=True, hours=3.0,
-            body_text="",
-        ),
+        TaskEntry(id="t1", title="MARK", entry_date=date(2026, 2, 15),
+                  tags=["MARK"], checkbox=True,
+                  body_text="Woke up at 12:30. Sleep time 8:54. Recovery 81\nMINUS TESTIK KATE\nMARK: good"),
+        TaskEntry(id="t2", title="GYM", entry_date=date(2026, 2, 15),
+                  tags=["GYM"], checkbox=True, hours=1.5),
+        TaskEntry(id="t3", title="CODING", entry_date=date(2026, 2, 15),
+                  tags=["CODING"], checkbox=True, hours=3.0),
+    ]
+
+
+@pytest.fixture
+def sample_goals() -> list[Goal]:
+    return [
+        Goal(id="g1", user_id=123, name="GYM", target_activity="GYM", target_count=4, period="week"),
+        Goal(id="g2", user_id=123, name="CODING", target_activity="CODING", target_count=5, period="week"),
+        Goal(id="g3", user_id=123, name="TESTIK_PLUS", target_activity="TESTIK_PLUS", target_count=5, period="week"),
     ]
 
 
 @pytest.fixture
 def cache_service(tmp_path) -> Generator[CacheService, None, None]:
     import src.utils.cache as cache_module
-    original_path = cache_module.DB_PATH
+    original = cache_module.DB_PATH
     cache_module.DB_PATH = tmp_path / "test_cache.db"
     svc = CacheService(ttl_seconds=60)
     yield svc
-    cache_module.DB_PATH = original_path
+    cache_module.DB_PATH = original
 
 
 @pytest.fixture
 def mock_notion_response() -> list[dict]:
-    """Sample Notion API response pages matching Tasks DB structure."""
     return [
-        {
-            "id": "page-001",
-            "properties": {
-                "Name": {"type": "title", "title": [{"plain_text": "MARK"}]},
-                "Date": {"date": {"start": "2026-02-15"}},
-                "Tags": {"multi_select": [{"name": "MARK"}]},
-                "Checkbox": {"checkbox": True},
-                "It took (hours)": {"number": None},
-            },
-        },
-        {
-            "id": "page-002",
-            "properties": {
-                "Name": {"type": "title", "title": [{"plain_text": "GYM"}]},
-                "Date": {"date": {"start": "2026-02-15"}},
-                "Tags": {"multi_select": [{"name": "GYM"}]},
-                "Checkbox": {"checkbox": True},
-                "It took (hours)": {"number": 1.5},
-            },
-        },
-        {
-            "id": "page-003",
-            "properties": {
-                "Name": {"type": "title", "title": [{"plain_text": "CODING"}]},
-                "Date": {"date": {"start": "2026-02-15"}},
-                "Tags": {"multi_select": [{"name": "CODING"}]},
-                "Checkbox": {"checkbox": True},
-                "It took (hours)": {"number": 3.0},
-            },
-        },
+        {"id": "p1", "properties": {
+            "Name": {"type": "title", "title": [{"plain_text": "MARK"}]},
+            "Date": {"date": {"start": "2026-02-15"}},
+            "Tags": {"multi_select": [{"name": "MARK"}]},
+            "Checkbox": {"checkbox": True},
+            "It took (hours)": {"number": None},
+        }},
+        {"id": "p2", "properties": {
+            "Name": {"type": "title", "title": [{"plain_text": "GYM"}]},
+            "Date": {"date": {"start": "2026-02-15"}},
+            "Tags": {"multi_select": [{"name": "GYM"}]},
+            "Checkbox": {"checkbox": True},
+            "It took (hours)": {"number": 1.5},
+        }},
     ]

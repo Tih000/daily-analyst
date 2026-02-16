@@ -150,6 +150,51 @@ def _validate_month(month: int) -> None:
         raise ValueError(f"Месяц должен быть 1-12, получено {month}")
 
 
+# ── Compare command parsing ──────────────────────────────────────────────────
+
+
+def parse_compare_args(text: str) -> tuple[tuple[int, int], tuple[int, int]]:
+    """Parse '/compare jan feb' or '/compare 2025-01 2025-02'. Returns two (year, month)."""
+    parts = text.strip().split()
+    if len(parts) < 2:
+        raise ValueError("Нужно два месяца: /compare январь февраль")
+    return parse_month_arg(parts[0]), parse_month_arg(parts[1])
+
+
+# ── Goal command parsing ────────────────────────────────────────────────────
+
+
+def parse_goal_arg(text: str) -> tuple[str, int, str]:
+    """
+    Parse '/set_goal gym 4/week'.
+
+    Returns (activity, target_count, period).
+    """
+    parts = text.strip().split()
+    if len(parts) < 2:
+        raise ValueError("Формат: /set_goal <activity> <count>/<period>\nПример: /set_goal gym 4/week")
+
+    activity = parts[0].upper()
+    target_str = parts[1]
+
+    if "/" in target_str:
+        count_str, period = target_str.split("/", 1)
+        try:
+            count = int(count_str)
+        except ValueError:
+            raise ValueError(f"Не могу распознать число: '{count_str}'")
+        if period not in ("week", "month"):
+            raise ValueError("Период должен быть 'week' или 'month'")
+    else:
+        try:
+            count = int(target_str)
+        except ValueError:
+            raise ValueError(f"Не могу распознать число: '{target_str}'")
+        period = "week"
+
+    return activity, count, period
+
+
 # ── Utility helpers ─────────────────────────────────────────────────────────
 
 

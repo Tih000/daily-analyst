@@ -1,14 +1,21 @@
 """Tests for Pydantic models and computed properties."""
 
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 
 from src.models.journal_entry import (
+    ActivityCorrelation,
+    CorrelationMatrix,
     DailyRecord,
     DayRating,
     DaySummary,
+    Goal,
+    GoalProgress,
+    MetricDelta,
+    MonthComparison,
     SleepInfo,
+    StreakInfo,
     TaskEntry,
     TestikStatus,
 )
@@ -26,6 +33,12 @@ class TestDayRating:
     def test_emojis(self) -> None:
         assert DayRating.PERFECT.emoji == "🤩"
         assert DayRating.VERY_BAD.emoji == "😫"
+
+    def test_is_good(self) -> None:
+        assert DayRating.PERFECT.is_good is True
+        assert DayRating.GOOD.is_good is True
+        assert DayRating.NORMAL.is_good is False
+        assert DayRating.BAD.is_good is False
 
 
 class TestTestikStatus:
@@ -98,3 +111,64 @@ class TestSleepInfo:
         s = SleepInfo(woke_up_at="12:30", sleep_duration="8:54", sleep_hours=8.9, recovery=81)
         assert s.sleep_hours == 8.9
         assert s.recovery == 81
+
+
+class TestStreakInfo:
+    def test_basic(self) -> None:
+        s = StreakInfo(name="GYM", emoji="🏋️", current=5, record=12)
+        assert s.current == 5
+        assert s.record == 12
+
+    def test_defaults(self) -> None:
+        s = StreakInfo(name="X", emoji="?")
+        assert s.current == 0
+        assert s.record == 0
+
+
+class TestGoal:
+    def test_basic(self) -> None:
+        g = Goal(id="g1", user_id=123, name="GYM", target_activity="GYM", target_count=4, period="week")
+        assert g.label == "GYM 4/week"
+
+
+class TestGoalProgress:
+    def test_bar(self) -> None:
+        g = Goal(id="g1", user_id=1, name="X", target_activity="X", target_count=4, period="week")
+        p = GoalProgress(goal=g, current=3, target=4, percentage=75.0)
+        assert "█" in p.bar
+        assert p.is_complete is False
+
+    def test_complete(self) -> None:
+        g = Goal(id="g2", user_id=1, name="Y", target_activity="Y", target_count=3, period="week")
+        p = GoalProgress(goal=g, current=3, target=3, percentage=100.0)
+        assert p.is_complete is True
+
+
+class TestMetricDelta:
+    def test_positive(self) -> None:
+        m = MetricDelta(name="Rating", emoji="⭐", value_a=3.0, value_b=4.5)
+        assert m.delta == 1.5
+        assert m.arrow == "↑"
+        assert m.trend_emoji == "🟢"
+
+    def test_negative(self) -> None:
+        m = MetricDelta(name="Sleep", emoji="😴", value_a=7.0, value_b=6.0)
+        assert m.delta == -1.0
+        assert m.arrow == "↓"
+
+    def test_zero(self) -> None:
+        m = MetricDelta(name="X", emoji="?", value_a=5.0, value_b=5.0)
+        assert m.delta == 0
+        assert m.arrow == "→"
+
+
+class TestCorrelationMatrix:
+    def test_basic(self) -> None:
+        corr = CorrelationMatrix(
+            baseline_rating=3.5,
+            correlations=[
+                ActivityCorrelation(activity="GYM", avg_rating=4.5, count=10, vs_baseline=1.0),
+            ],
+        )
+        assert corr.baseline_rating == 3.5
+        assert len(corr.correlations) == 1

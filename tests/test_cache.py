@@ -1,4 +1,4 @@
-"""Tests for SQLite cache service."""
+"""Tests for SQLite cache service (with goals support)."""
 
 from datetime import date, timedelta
 
@@ -7,6 +7,7 @@ import pytest
 from src.models.journal_entry import (
     DailyRecord,
     DayRating,
+    Goal,
     SleepInfo,
     TaskEntry,
     TestikStatus,
@@ -33,7 +34,6 @@ class TestCacheService:
     def test_upsert_daily_records(self, cache_service: CacheService, sample_records: list[DailyRecord]) -> None:
         count = cache_service.upsert_daily_records(sample_records)
         assert count == len(sample_records)
-
         retrieved = cache_service.get_daily_records()
         assert len(retrieved) == len(sample_records)
 
@@ -96,3 +96,23 @@ class TestCacheService:
         result = cache_service.get_daily_records(date(2026, 3, 1), date(2026, 3, 31), exclude_weekly=True)
         assert len(result) == 1
         assert result[0].entry_date == date(2026, 3, 1)
+
+
+class TestGoalsPersistence:
+    def test_upsert_and_get(self, cache_service: CacheService, sample_goals: list[Goal]) -> None:
+        for g in sample_goals:
+            cache_service.upsert_goal(g)
+        goals = cache_service.get_goals(123)
+        assert len(goals) == 3
+
+    def test_delete_goal(self, cache_service: CacheService, sample_goals: list[Goal]) -> None:
+        for g in sample_goals:
+            cache_service.upsert_goal(g)
+        assert cache_service.delete_goal("g1")
+        assert len(cache_service.get_goals(123)) == 2
+
+    def test_delete_nonexistent(self, cache_service: CacheService) -> None:
+        assert not cache_service.delete_goal("nonexistent")
+
+    def test_no_goals(self, cache_service: CacheService) -> None:
+        assert cache_service.get_goals(999) == []

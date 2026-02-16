@@ -404,31 +404,68 @@ sudo systemctl status daily-analyst
 
 ---
 
-## Команды бота
+## Команды бота (19 команд)
+
+### Аналитика
 
 | Команда | Описание |
 |---|---|
 | `/start` | Приветствие + список команд |
 | `/analyze [месяц]` | Полный анализ месяца с графиками |
+| `/compare [мес1] [мес2]` | Сравнение двух месяцев бок о бок |
+| `/correlations` | Матрица корреляций активностей |
+| `/day_types` | AI классификация типов дней |
+| `/report [месяц]` | Карточка месяца (Spotify Wrapped стиль) |
+
+### Прогнозы
+
+| Команда | Описание |
+|---|---|
 | `/predict` | Прогноз риска выгорания на 5 дней |
+| `/tomorrow_mood` | Прогноз завтрашнего настроения |
 | `/best_days [месяц]` | Топ-3 продуктивных дня |
-| `/optimal_hours` | Анализ оптимального времени работы |
+
+### Глубокий анализ
+
+| Команда | Описание |
+|---|---|
+| `/optimal_hours` | Анализ оптимального режима работы |
 | `/kate_impact` | Корреляция отношений и продуктивности |
 | `/testik_patterns` | Паттерны TESTIK и влияние на метрики |
 | `/sleep_optimizer` | Анализ сна и рекомендации |
-| `/money_forecast` | Прогноз заработка |
+| `/money_forecast` | Анализ рабочих паттернов |
 | `/weak_spots` | Слабые места в продуктивности |
-| `/tomorrow_mood` | Прогноз завтрашнего настроения |
+
+### Геймификация
+
+| Команда | Описание |
+|---|---|
+| `/streaks` | Текущие серии (TESTIK PLUS, GYM, CODING, оценка, сон) |
+| `/habits <name>` | GitHub-style тепловая карта привычки (gym, coding, sleep7...) |
+| `/set_goal <act> <n/period>` | Установить цель (gym 4/week, coding 5/week) |
+| `/goals` | Прогресс целей с визуальными полосками |
+
+### Автоматические функции
+
+- **Proactive Alerts** — бот сам пишет, если обнаруживает проблему (3+ дня без тренировки, плохой сон, TESTIK MINUS streak)
+- **Weekly Digest** — еженедельная сводка по воскресеньям со сравнением с прошлой неделей
 
 ### Примеры использования
 
 ```
 /analyze              → анализ текущего месяца
 /analyze 2025-01      → анализ января 2025
-/analyze january      → анализ января текущего года
 /analyze январь       → то же самое по-русски
-/best_days 3          → топ-3 дня за март
+/compare jan feb      → сравнение январь vs февраль
+/correlations         → какие активности дают лучшие оценки
+/report               → красивая карточка текущего месяца
+/streaks              → серии подряд (с рекордами)
+/habits gym           → тепловая карта тренировок за 3 месяца
+/habits sleep7        → дни когда спал ≥ 7 часов
+/set_goal gym 4/week  → цель: 4 тренировки в неделю
+/goals                → прогресс всех целей
 /predict              → риск выгорания с графиком
+/day_types            → типы дней с метриками
 ```
 
 ---
@@ -465,18 +502,23 @@ mypy src/
 
 ```
 src/
-├── main.py              # FastAPI + Telegram handlers (11 команд)
+├── main.py              # FastAPI + Telegram handlers (19 команд + alerts)
 ├── config.py            # Env variables (dataclass-based)
 ├── services/
 │   ├── notion_service.py  # Notion DB + Blocks API, парсинг MARK entries
-│   ├── ai_analyzer.py     # GPT analysis + local stats
-│   └── charts_service.py  # Matplotlib charts (6 типов)
+│   ├── ai_analyzer.py     # GPT analysis + local stats + streaks + goals
+│   └── charts_service.py  # Matplotlib charts (9 типов: overview, burnout,
+│                          #   testik, sleep, activity, heatmap, correlation,
+│                          #   report card, compare)
 ├── models/
-│   └── journal_entry.py   # TaskEntry, DailyRecord, enums
+│   └── journal_entry.py   # TaskEntry, DailyRecord, Goal, StreakInfo,
+│                          #   MetricDelta, CorrelationMatrix, GoalProgress
 └── utils/
-    ├── cache.py           # SQLite: task_entries + daily_records
-    └── validators.py      # Парсинг sleep/testik/rating из текста
+    ├── cache.py           # SQLite: task_entries + daily_records + goals
+    └── validators.py      # Парсинг sleep/testik/rating + compare/goal args
 ```
+
+**Ключевая особенность:** GPT получает ПОЛНЫЙ текст дневника (`journal_text`) из MARK записей — не только структурированные метрики. Это позволяет анализировать эмоции, контекст и паттерны жизни.
 
 **Поток данных:**
 
@@ -484,13 +526,16 @@ src/
 Notion Tasks DB
   ↓ (query database API + fetch page blocks for MARK entries)
 TaskEntry[] (raw pages)
-  ↓ (group by date, parse MARK body text)
-DailyRecord[] (aggregated: rating, testik, sleep, activities)
-  ↓ (cache in SQLite)
+  ↓ (group by date, parse MARK body text — sleep, testik, rating)
+DailyRecord[] (aggregated: rating, testik, sleep, activities, journal_text)
+  ↓ (cache in SQLite + goals table)
   ↓
-Telegram command → AIAnalyzer → GPT-4o-mini → insights
-                 → ChartsService → PNG charts
+Telegram command → AIAnalyzer → GPT-4o-mini (с полным journal_text) → insights
+                 → ChartsService → PNG charts (heatmaps, reports, correlations)
                  → reply + photos → Telegram
+  ↓
+Background loop → check_alerts() → proactive messages
+               → weekly_digest() → Sunday summaries
 ```
 
 ---
