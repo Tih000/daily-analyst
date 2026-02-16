@@ -2,62 +2,403 @@
 
 Telegram-бот для анализа продуктивности на основе Notion-дневника. Использует GPT-4o-mini для инсайтов и Matplotlib для графиков.
 
-## Быстрый старт (2 минуты)
+---
+
+## Быстрый старт
 
 ### 1. Клонируй и установи
 
 ```bash
-cd daily_analyst
+git clone https://github.com/Tih000/daily-analyst.git
+cd daily-analyst
+
 python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS/Linux
+source venv/bin/activate     # Linux / macOS
+# venv\Scripts\activate      # Windows
 
 pip install -r requirements.txt
 ```
 
-### 2. Настрой .env
+### 2. Настрой `.env`
 
 ```bash
-copy .env.example .env       # Windows
-# cp .env.example .env       # macOS/Linux
+cp .env.example .env
+nano .env                    # заполни все переменные (гайд ниже)
 ```
 
-Заполни переменные:
-
-| Переменная | Где взять |
-|---|---|
-| `TELEGRAM_BOT_TOKEN` | [@BotFather](https://t.me/BotFather) → /newbot |
-| `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
-| `NOTION_TOKEN` | [notion.so/my-integrations](https://www.notion.so/my-integrations) → New integration |
-| `NOTION_DATABASE_ID` | URL вашей базы данных: `notion.so/{workspace}/{DATABASE_ID}?v=...` |
-| `ALLOWED_USER_IDS` | Ваш Telegram ID (узнать: [@userinfobot](https://t.me/userinfobot)) |
-
-### 3. Настрой Notion Database
-
-Создай базу данных в Notion с полями:
-
-| Поле | Тип | Значения |
-|---|---|---|
-| Date | Date | — |
-| Mood | Select | PERFECT, GOOD, NORMAL, BAD, VERY_BAD |
-| Hours Worked | Number | — |
-| Tasks Completed | Number | — |
-| TESTIK | Select | PLUS, MINUS_KATE, MINUS_SOLO |
-| Workout | Checkbox | — |
-| University | Checkbox | — |
-| Earnings USD | Number | — |
-| Sleep Hours | Number | — |
-| Notes | Rich Text | — |
-
-**Важно:** Подключи интеграцию к базе данных (Share → Invite → выбери интеграцию).
-
-### 4. Запусти
+### 3. Запусти
 
 ```bash
 python -m src.main
 ```
 
-Бот доступен по адресу `http://localhost:8000`. Для разработки используйте [ngrok](https://ngrok.com/) для туннелирования webhook.
+Бот будет доступен на `http://localhost:8000`.
+
+---
+
+## Где взять все переменные `.env`
+
+### `TELEGRAM_BOT_TOKEN`
+
+Токен Telegram-бота для отправки и получения сообщений.
+
+1. Открой Telegram, найди **[@BotFather](https://t.me/BotFather)**
+2. Отправь `/newbot`
+3. Придумай имя бота (например: `Daily Analyst`) и username (например: `my_daily_analyst_bot`)
+4. BotFather ответит сообщением с токеном вида `7123456789:AAF...` — скопируй его
+
+```
+TELEGRAM_BOT_TOKEN=7123456789:AAFxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+### `TELEGRAM_WEBHOOK_URL`
+
+URL, на который Telegram будет отправлять обновления. Это адрес твоего VPS + `/webhook`.
+
+- Нужен **HTTPS** (Telegram не шлёт webhook на голый HTTP)
+- Если у тебя домен `example.com`, то:
+
+```
+TELEGRAM_WEBHOOK_URL=https://example.com/webhook
+```
+
+- Если домена нет — можно использовать IP с self-signed сертификатом, но проще привязать домен
+
+### `TELEGRAM_WEBHOOK_SECRET`
+
+Секретная строка для проверки, что webhook приходит именно от Telegram, а не от кого-то другого.
+
+Сгенерируй любую случайную строку:
+
+```bash
+# Linux / macOS:
+openssl rand -hex 32
+
+# Или Python:
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+```
+TELEGRAM_WEBHOOK_SECRET=a1b2c3d4e5f6...любая_длинная_случайная_строка
+```
+
+### `ALLOWED_USER_IDS`
+
+Telegram ID пользователей, которым разрешено использовать бота. Если оставить пустым — доступ будет у всех.
+
+**Как узнать свой Telegram ID:**
+1. Открой **[@userinfobot](https://t.me/userinfobot)** в Telegram
+2. Отправь `/start`
+3. Бот ответит твоим ID (число вида `123456789`)
+
+Несколько ID через запятую:
+
+```
+ALLOWED_USER_IDS=123456789,987654321
+```
+
+---
+
+### `OPENAI_API_KEY`
+
+Ключ API для GPT-4o-mini, который используется для анализа данных.
+
+1. Зайди на **[platform.openai.com](https://platform.openai.com/)**
+2. Зарегистрируйся / войди
+3. Перейди в **[API Keys](https://platform.openai.com/api-keys)**
+4. Нажми **Create new secret key**
+5. Скопируй ключ (начинается с `sk-`)
+
+**Важно:** Нужен баланс на аккаунте. GPT-4o-mini стоит ~$0.15 / 1M input tokens — очень дёшево, ~$1-2 в месяц при активном использовании.
+
+```
+OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+### `OPENAI_MODEL`
+
+Модель OpenAI для анализа. По умолчанию `gpt-4o-mini` — лучшее соотношение цены и качества.
+
+```
+OPENAI_MODEL=gpt-4o-mini
+```
+
+Другие варианты: `gpt-4o` (дороже, умнее), `gpt-3.5-turbo` (дешевле, проще).
+
+---
+
+### `NOTION_TOKEN`
+
+Токен интеграции Notion для чтения базы данных дневника.
+
+1. Зайди на **[notion.so/my-integrations](https://www.notion.so/my-integrations)**
+2. Нажми **New integration**
+3. Заполни:
+   - **Name:** `Daily Analyst` (или любое)
+   - **Associated workspace:** выбери свой workspace
+   - **Capabilities:** отметь **Read content**
+4. Нажми **Submit** → скопируй **Internal Integration Secret** (начинается с `secret_`)
+
+```
+NOTION_TOKEN=secret_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+### `NOTION_DATABASE_ID`
+
+ID базы данных Notion, откуда бот будет читать записи дневника.
+
+**Как найти:**
+1. Открой нужную базу данных в Notion **в браузере**
+2. URL будет выглядеть так:
+   ```
+   https://www.notion.so/myworkspace/a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4?v=...
+   ```
+3. **Database ID** — это длинная часть между последним `/` и `?`:
+   ```
+   a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4
+   ```
+
+**Важно — подключи интеграцию к базе:**
+1. Открой базу данных в Notion
+2. Нажми **...** (три точки справа вверху) → **Connections** → **Connect to** → выбери `Daily Analyst`
+
+Без этого шага бот не сможет прочитать данные.
+
+```
+NOTION_DATABASE_ID=a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4
+```
+
+#### Структура базы данных Notion
+
+Создай базу данных с **точно** такими именами полей:
+
+| Поле | Тип | Значения |
+|---|---|---|
+| **Date** | Date | — |
+| **Mood** | Select | `PERFECT`, `GOOD`, `NORMAL`, `BAD`, `VERY_BAD` |
+| **Hours Worked** | Number | — |
+| **Tasks Completed** | Number | — |
+| **TESTIK** | Select | `PLUS`, `MINUS_KATE`, `MINUS_SOLO` |
+| **Workout** | Checkbox | — |
+| **University** | Checkbox | — |
+| **Earnings USD** | Number | — |
+| **Sleep Hours** | Number | — |
+| **Notes** | Rich Text | — |
+
+---
+
+### `APP_ENV`
+
+Режим работы приложения. Влияет на авто-перезагрузку при изменениях.
+
+```
+APP_ENV=production       # для VPS (без hot reload)
+APP_ENV=development      # для локальной разработки (с hot reload)
+```
+
+### `LOG_LEVEL`
+
+Уровень логирования.
+
+```
+LOG_LEVEL=INFO           # стандартный (рекомендуется)
+LOG_LEVEL=DEBUG          # подробный (для отладки)
+LOG_LEVEL=WARNING        # только предупреждения и ошибки
+```
+
+### `RATE_LIMIT_PER_MINUTE`
+
+Максимальное количество команд от одного пользователя в минуту. Защита от спама.
+
+```
+RATE_LIMIT_PER_MINUTE=20
+```
+
+### `CACHE_TTL_SECONDS`
+
+Время жизни кэша в секундах. Бот кэширует данные из Notion в SQLite, чтобы не дёргать API при каждом запросе.
+
+```
+CACHE_TTL_SECONDS=300    # 5 минут (рекомендуется)
+```
+
+### `APP_PORT`
+
+Порт, на котором приложение слушает внутри Docker. Используется в `docker-compose.yml`.
+
+```
+APP_PORT=8000
+```
+
+### `DOMAIN`
+
+Твой домен. Используется в nginx конфиге для SSL-сертификата.
+
+```
+DOMAIN=example.com
+```
+
+---
+
+## Деплой на VPS
+
+### Требования
+
+- VPS с Ubuntu 22.04+ (или любой Linux)
+- Docker + Docker Compose
+- Домен, направленный на IP сервера (A-запись в DNS)
+
+### Шаг 1: Подготовка сервера
+
+```bash
+# Установи Docker (если нет)
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+
+# Установи Docker Compose
+sudo apt install docker-compose-plugin -y
+
+# Перезайди для применения группы docker
+exit
+```
+
+### Шаг 2: Клонируй проект
+
+```bash
+git clone https://github.com/Tih000/daily-analyst.git
+cd daily-analyst
+```
+
+### Шаг 3: Настрой `.env`
+
+```bash
+cp .env.example .env
+nano .env
+# Заполни ВСЕ переменные по гайду выше
+```
+
+### Шаг 4: Замени домен в nginx конфиге
+
+Открой `nginx/nginx.conf` и замени все `${DOMAIN}` на свой домен:
+
+```bash
+sed -i 's/${DOMAIN}/example.com/g' nginx/nginx.conf
+```
+
+### Шаг 5: Получи SSL-сертификат
+
+**Первый запуск** — нужно получить сертификат перед запуском nginx с SSL.
+
+Временно запусти nginx только на HTTP для прохождения ACME-challenge:
+
+```bash
+# Создай директории для certbot
+mkdir -p nginx/certbot/conf nginx/certbot/www
+
+# Получи сертификат
+docker run --rm \
+  -v $(pwd)/nginx/certbot/conf:/etc/letsencrypt \
+  -v $(pwd)/nginx/certbot/www:/var/www/certbot \
+  -p 80:80 \
+  certbot/certbot certonly \
+    --standalone \
+    --email your@email.com \
+    --agree-tos \
+    --no-eff-email \
+    -d example.com
+```
+
+### Шаг 6: Запусти всё
+
+```bash
+docker compose up -d --build
+```
+
+Проверь, что всё работает:
+
+```bash
+# Логи бота
+docker compose logs -f bot
+
+# Health check
+curl https://example.com/health
+
+# Статус контейнеров
+docker compose ps
+```
+
+### Шаг 7: Установи webhook
+
+Webhook устанавливается автоматически при старте бота (если `TELEGRAM_WEBHOOK_URL` заполнен в `.env`).
+
+Проверить текущий webhook:
+
+```bash
+curl "https://api.telegram.org/bot<YOUR_TOKEN>/getWebhookInfo"
+```
+
+---
+
+### Управление на VPS
+
+```bash
+# Перезапустить
+docker compose restart bot
+
+# Обновить код
+git pull
+docker compose up -d --build
+
+# Посмотреть логи
+docker compose logs -f bot --tail=100
+
+# Остановить
+docker compose down
+
+# Ручная синхронизация Notion
+curl https://example.com/sync
+```
+
+---
+
+### Без Docker (systemd)
+
+Если не хочешь Docker — можно запустить напрямую через systemd:
+
+```bash
+# Установи зависимости
+python3.11 -m venv /opt/daily-analyst/venv
+source /opt/daily-analyst/venv/bin/activate
+pip install -r requirements.txt
+```
+
+Создай systemd-сервис `/etc/systemd/system/daily-analyst.service`:
+
+```ini
+[Unit]
+Description=Daily Analyst Telegram Bot
+After=network.target
+
+[Service]
+Type=exec
+User=www-data
+WorkingDirectory=/opt/daily-analyst
+EnvironmentFile=/opt/daily-analyst/.env
+ExecStart=/opt/daily-analyst/venv/bin/uvicorn src.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now daily-analyst
+sudo systemctl status daily-analyst
+```
+
+В этом случае nginx настраивай отдельно как обычный reverse proxy на `127.0.0.1:8000`.
 
 ---
 
@@ -77,69 +418,15 @@ python -m src.main
 | `/weak_spots` | Слабые места в продуктивности |
 | `/tomorrow_mood` | Прогноз завтрашнего настроения |
 
-### Примеры
+### Примеры использования
 
 ```
 /analyze              → анализ текущего месяца
 /analyze 2025-01      → анализ января 2025
 /analyze january      → анализ января текущего года
+/analyze январь       → то же самое по-русски
 /best_days 3          → топ-3 дня за март
 /predict              → риск выгорания с графиком
-```
-
-**Пример ответа `/analyze`:**
-
-```
-📊 Анализ за 2025-01
-
-📝 Записей: 28
-😊 Ср. настроение: 3.7/5
-⏰ Ср. работа: 7.2ч/день
-😴 Ср. сон: 7.1ч
-💰 Заработок: $2,450
-✅ Задач: 142
-🏋️ Тренировки: 57.1%
-
-🏆 Лучший день: 2025-01-15 (score: 92.5)
-📉 Худший день: 2025-01-03 (score: 21.0)
-
-🤖 AI Insights:
-📈 Тренды: Продуктивность растёт к середине месяца...
-✅ Хорошо: Стабильный сон 7+ часов...
-⚠️ Улучшить: 3 дня с MINUS_KATE снижают score на 40%...
-💡 Совет: Добавь утренние тренировки в дни с MINUS...
-```
-
----
-
-## Деплой на Railway
-
-```bash
-# 1. Установи Railway CLI
-npm install -g @railway/cli
-
-# 2. Авторизуйся
-railway login
-
-# 3. Инициализируй проект
-railway init
-
-# 4. Добавь переменные окружения
-railway variables set TELEGRAM_BOT_TOKEN=...
-railway variables set OPENAI_API_KEY=...
-railway variables set NOTION_TOKEN=...
-railway variables set NOTION_DATABASE_ID=...
-railway variables set TELEGRAM_WEBHOOK_URL=https://your-app.railway.app/webhook
-
-# 5. Деплой
-railway up
-```
-
-### Docker (локально)
-
-```bash
-docker build -t daily-analyst .
-docker run -p 8000:8000 --env-file .env daily-analyst
 ```
 
 ---
@@ -149,17 +436,17 @@ docker run -p 8000:8000 --env-file .env daily-analyst
 ### Тесты
 
 ```bash
-pytest -v                    # все тесты
-pytest tests/test_cache.py   # только кэш
-pytest --tb=short            # краткий вывод ошибок
+pytest -v
+pytest tests/test_cache.py   # один модуль
+pytest --tb=short            # краткий вывод
 ```
 
 ### Линтинг
 
 ```bash
-ruff check src/ tests/       # линтер
-ruff format src/ tests/      # форматирование
-mypy src/                    # типизация
+ruff check src/ tests/
+ruff format src/ tests/
+mypy src/
 ```
 
 ### API endpoints
@@ -189,18 +476,16 @@ src/
     └── validators.py      # Input parsing + formatting
 ```
 
-### Потоки данных
-
 ```
-Telegram → /webhook → FastAPI → CommandHandler → NotionService → Cache
-                                                              ↓
-                                                  AIAnalyzer ← entries
-                                                       ↓
-                                               GPT-4o-mini → insights
-                                                       ↓
-                                              ChartsService → PNG
-                                                       ↓
-                                               Telegram ← reply + photo
+Telegram → /webhook → nginx (SSL) → FastAPI → CommandHandler → NotionService → Cache
+                                                                            ↓
+                                                                AIAnalyzer ← entries
+                                                                     ↓
+                                                             GPT-4o-mini → insights
+                                                                     ↓
+                                                            ChartsService → PNG
+                                                                     ↓
+                                                             Telegram ← reply + photo
 ```
 
 ---

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import sqlite3
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Generator, Optional
 
@@ -74,11 +73,13 @@ class CacheService:
             if not row:
                 return False
             updated_at = datetime.fromisoformat(row["updated_at"])
-            return (datetime.utcnow() - updated_at).total_seconds() < self.ttl_seconds
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+            return (datetime.now(timezone.utc) - updated_at).total_seconds() < self.ttl_seconds
 
     def mark_synced(self) -> None:
         """Mark cache as freshly synced."""
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         with _get_connection() as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO cache_metadata (key, value, updated_at)
@@ -109,7 +110,7 @@ class CacheService:
                         entry.earnings_usd,
                         entry.sleep_hours,
                         entry.notes,
-                        datetime.utcnow().isoformat(),
+                        datetime.now(timezone.utc).isoformat(),
                     ),
                 )
             conn.commit()

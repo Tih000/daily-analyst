@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import statistics
 from collections import Counter
@@ -10,6 +9,12 @@ from datetime import date, timedelta
 from typing import Any, Optional
 
 import openai
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from src.config import get_settings
 from src.models.journal_entry import (
@@ -33,6 +38,14 @@ SYSTEM_PROMPT = """Ты эксперт по продуктивности. Ана
 - Чёткие метрики и цифры
 Отвечай кратко, с эмодзи, actionable insights. На русском языке."""
 
+# Retry on transient OpenAI errors
+_RETRY_EXCEPTIONS = (
+    openai.RateLimitError,
+    openai.APITimeoutError,
+    openai.APIConnectionError,
+    openai.InternalServerError,
+)
+
 
 class AIAnalyzer:
     """Analyzes journal entries using GPT and local statistics."""
@@ -44,8 +57,14 @@ class AIAnalyzer:
 
     # ── GPT call helper ─────────────────────────────────────────────────────
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(min=1, max=15),
+        retry=retry_if_exception_type(_RETRY_EXCEPTIONS),
+        reraise=True,
+    )
     async def _ask_gpt(self, user_prompt: str, max_tokens: int = 1500) -> str:
-        """Send a prompt to GPT and return the text response."""
+        """Send a prompt to GPT and return the text response (with retry)."""
         try:
             response = await self._client.chat.completions.create(
                 model=self._model,
@@ -57,6 +76,8 @@ class AIAnalyzer:
                 temperature=0.7,
             )
             return response.choices[0].message.content or ""
+        except _RETRY_EXCEPTIONS:
+            raise  # let tenacity handle retries
         except Exception as e:
             logger.error("GPT call failed: %s", e)
             return f"⚠️ AI анализ недоступен: {e}"
@@ -64,23 +85,63 @@ class AIAnalyzer:
     # ── Entries to text ─────────────────────────────────────────────────────
 
     @staticmethod
-    def _entries_to_summary(entries: list[JournalEntry]) -> str:
-        """Convert entries to a compact text summary for GPT context."""
+    def _entries_to_summary(entries: list[JournalEntry], max_detailed: int = 10) -> str:
+        """Convert entries to a compact text summary for GPT context.
+
+        Sends aggregated stats for all entries, plus detailed lines for
+        the most recent `max_detailed` entries (with notes) to keep
+        token usage manageable.
+        """
         if not entries:
             return "Нет данных."
 
-        lines: list[str] = []
-        for e in sorted(entries, key=lambda x: x.entry_date):
+        sorted_entries = sorted(entries, key=lambda x: x.entry_date)
+
+        # Aggregate stats for full period
+        mood_scores = [e.mood.score for e in sorted_entries if e.mood]
+        sleep_vals = [e.sleep_hours for e in sorted_entries]
+        work_vals = [e.hours_worked for e in sorted_entries]
+        prod_vals = [e.productivity_score for e in sorted_entries]
+        earnings_vals = [e.earnings_usd for e in sorted_entries]
+        testik_counter = Counter(e.testik.value if e.testik else "N/A" for e in sorted_entries)
+        workout_count = sum(1 for e in sorted_entries if e.workout)
+        uni_count = sum(1 for e in sorted_entries if e.university)
+
+        agg_lines = [
+            f"Период: {sorted_entries[0].entry_date} — {sorted_entries[-1].entry_date} ({len(sorted_entries)} дней)",
+            f"Средние: mood={statistics.mean(mood_scores):.1f}/5, work={statistics.mean(work_vals):.1f}h, "
+            f"sleep={statistics.mean(sleep_vals):.1f}h, productivity={statistics.mean(prod_vals):.1f}"
+            if mood_scores else "Средние: нет данных о настроении",
+            f"Заработок: ${sum(earnings_vals):.0f} total, ${statistics.mean(earnings_vals):.1f}/день",
+            f"TESTIK: {dict(testik_counter)}",
+            f"Тренировки: {workout_count}/{len(sorted_entries)}, Универ: {uni_count}/{len(sorted_entries)}",
+        ]
+
+        # Detailed lines for recent entries (with notes)
+        recent = sorted_entries[-max_detailed:]
+        detail_lines: list[str] = []
+        for e in recent:
             mood_str = e.mood.value if e.mood else "N/A"
             testik_str = e.testik.value if e.testik else "N/A"
-            lines.append(
+            notes_part = ""
+            if e.notes and e.notes.strip():
+                truncated_note = e.notes.strip()[:120]
+                notes_part = f', notes="{truncated_note}"'
+            detail_lines.append(
                 f"{e.entry_date}: mood={mood_str}, work={e.hours_worked}h, "
                 f"tasks={e.tasks_completed}, sleep={e.sleep_hours}h, "
-                f"testik={testik_str}, workout={'✓' if e.workout else '✗'}, "
-                f"uni={'✓' if e.university else '✗'}, ${e.earnings_usd}, "
-                f"score={e.productivity_score}"
+                f"testik={testik_str}, workout={'Y' if e.workout else 'N'}, "
+                f"uni={'Y' if e.university else 'N'}, ${e.earnings_usd}, "
+                f"score={e.productivity_score}{notes_part}"
             )
-        return "\n".join(lines)
+
+        result = "=== Сводка ===\n" + "\n".join(agg_lines)
+        if len(sorted_entries) > max_detailed:
+            result += f"\n\n=== Последние {max_detailed} дней (детально) ===\n"
+        else:
+            result += "\n\n=== Детально ===\n"
+        result += "\n".join(detail_lines)
+        return result
 
     # ── Analytics commands ──────────────────────────────────────────────────
 
@@ -95,12 +156,11 @@ class AIAnalyzer:
             )
 
         mood_scores = [e.mood.score for e in entries if e.mood]
-        prod_scores = [e.productivity_score for e in entries]
 
         best = max(entries, key=lambda e: e.productivity_score)
         worst = min(entries, key=lambda e: e.productivity_score)
 
-        summary = self._entries_to_summary(entries)
+        summary = self._entries_to_summary(entries, max_detailed=15)
         ai_text = await self._ask_gpt(
             f"Проанализируй продуктивность за {month_label}:\n{summary}\n\n"
             "Дай: 1) Главные тренды 2) Что хорошо 3) Что улучшить 4) Конкретные советы"
@@ -235,7 +295,7 @@ class AIAnalyzer:
         if not entries:
             return "📭 Нет данных для анализа."
 
-        summary = self._entries_to_summary(entries)
+        summary = self._entries_to_summary(entries, max_detailed=14)
         return await self._ask_gpt(
             f"Данные дневника:\n{summary}\n\n"
             "Проанализируй: 1) Оптимальное кол-во рабочих часов "
@@ -273,7 +333,7 @@ class AIAnalyzer:
                 f"avg_mood={avg_mood_mk:.1f}"
             )
 
-        summary = self._entries_to_summary(entries[-30:])
+        summary = self._entries_to_summary(entries[-30:], max_detailed=14)
         return await self._ask_gpt(
             f"Статистика отношений:\n{chr(10).join(stats_parts)}\n\n"
             f"Полные данные (последние 30 дней):\n{summary}\n\n"
@@ -303,9 +363,10 @@ class AIAnalyzer:
                 f"mood={avg_mood:.1f}, sleep={avg_sleep:.1f}h"
             )
 
+        summary = self._entries_to_summary(entries[-30:], max_detailed=14)
         return await self._ask_gpt(
             f"TESTIK статистика:\n" + "\n".join(stats_lines) + "\n\n"
-            f"Данные:\n{self._entries_to_summary(entries[-30:])}\n\n"
+            f"Данные:\n{summary}\n\n"
             "Проанализируй паттерны TESTIK: 1) Как каждый тип влияет на метрики "
             "2) Есть ли закономерности по дням недели "
             "3) Что делать для увеличения PLUS дней"
@@ -321,7 +382,7 @@ class AIAnalyzer:
         best_sleep_range = [s for s in sleep_data if s[1] > statistics.mean([x[1] for x in sleep_data])]
         optimal_sleep = statistics.mean([s[0] for s in best_sleep_range]) if best_sleep_range else avg_sleep
 
-        summary = self._entries_to_summary(entries[-30:])
+        summary = self._entries_to_summary(entries[-30:], max_detailed=14)
         return await self._ask_gpt(
             f"Данные сна: avg={avg_sleep:.1f}ч, optimal={optimal_sleep:.1f}ч\n"
             f"Дневник:\n{summary}\n\n"
@@ -340,7 +401,7 @@ class AIAnalyzer:
         avg_daily = total / len(entries) if entries else 0
         earning_days = len(earnings)
 
-        summary = self._entries_to_summary(entries[-30:])
+        summary = self._entries_to_summary(entries[-30:], max_detailed=14)
         return await self._ask_gpt(
             f"Заработок: total=${total:.0f}, avg/day=${avg_daily:.1f}, "
             f"earning_days={earning_days}/{len(entries)}\n"
@@ -355,7 +416,7 @@ class AIAnalyzer:
         if not entries:
             return "📭 Нет данных для анализа."
 
-        summary = self._entries_to_summary(entries[-30:])
+        summary = self._entries_to_summary(entries[-30:], max_detailed=14)
         return await self._ask_gpt(
             f"Данные за последний период:\n{summary}\n\n"
             "Найди ТОП-5 слабых мест в продуктивности. Для каждого дай:\n"

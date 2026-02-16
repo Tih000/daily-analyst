@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -25,6 +23,7 @@ def _list_from_env(key: str) -> list[int]:
 class TelegramConfig:
     bot_token: str = field(default_factory=lambda: os.environ["TELEGRAM_BOT_TOKEN"])
     webhook_url: str = field(default_factory=lambda: os.getenv("TELEGRAM_WEBHOOK_URL", ""))
+    webhook_secret: str = field(default_factory=lambda: os.getenv("TELEGRAM_WEBHOOK_SECRET", ""))
     allowed_user_ids: list[int] = field(default_factory=lambda: _list_from_env("ALLOWED_USER_IDS"))
 
 
@@ -38,26 +37,6 @@ class OpenAIConfig:
 class NotionConfig:
     token: str = field(default_factory=lambda: os.environ["NOTION_TOKEN"])
     database_id: str = field(default_factory=lambda: os.environ["NOTION_DATABASE_ID"])
-
-
-@dataclass(frozen=True)
-class GoogleSheetsConfig:
-    credentials_json: Optional[dict] = field(default_factory=lambda: _parse_google_creds())
-    sheet_id: str = field(default_factory=lambda: os.getenv("GOOGLE_SHEET_ID", ""))
-
-    @property
-    def enabled(self) -> bool:
-        return self.credentials_json is not None and bool(self.sheet_id)
-
-
-def _parse_google_creds() -> Optional[dict]:
-    raw = os.getenv("GOOGLE_SHEETS_CREDENTIALS_JSON", "")
-    if not raw or raw == "{}":
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return None
 
 
 @dataclass(frozen=True)
@@ -81,7 +60,6 @@ class Settings:
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
     openai: OpenAIConfig = field(default_factory=OpenAIConfig)
     notion: NotionConfig = field(default_factory=NotionConfig)
-    google_sheets: GoogleSheetsConfig = field(default_factory=GoogleSheetsConfig)
     app: AppConfig = field(default_factory=AppConfig)
 
 
