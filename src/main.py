@@ -672,26 +672,80 @@ async def _background_loop() -> None:
 # FASTAPI
 # ═══════════════════════════════════════════════════════════════════════════
 
+_polling_task: asyncio.Task | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    global _polling_task
+
     await bot_app.initialize()
     await bot_app.start()
 
     webhook_url = settings.telegram.webhook_url
+    use_polling = False
+
     if webhook_url:
-        kwargs: dict[str, object] = {"url": webhook_url}
-        if settings.telegram.webhook_secret:
-            kwargs["secret_token"] = settings.telegram.webhook_secret
-        await bot_app.bot.set_webhook(**kwargs)
-        logger.info("Webhook → %s", webhook_url)
+        if not webhook_url.startswith("https://") or "/webhook" not in webhook_url:
+            logger.error(
+                "TELEGRAM_WEBHOOK_URL invalid (must be https://.../.../webhook). "
+                "Got: %s — falling back to polling mode.",
+                webhook_url,
+            )
+            use_polling = True
+        else:
+            try:
+                kwargs: dict[str, object] = {"url": webhook_url}
+                if settings.telegram.webhook_secret:
+                    kwargs["secret_token"] = settings.telegram.webhook_secret
+                await bot_app.bot.set_webhook(**kwargs)
+                logger.info("Webhook set → %s", webhook_url)
+            except Exception as e:
+                logger.error(
+                    "Failed to set webhook (URL: %s): %s — falling back to polling mode.",
+                    webhook_url, e,
+                )
+                use_polling = True
+    else:
+        logger.info("TELEGRAM_WEBHOOK_URL not set — using polling mode")
+        use_polling = True
+
+    if use_polling:
+        # Remove any existing webhook so polling works
+        try:
+            await bot_app.bot.delete_webhook()
+        except Exception:
+            pass
+        # Start polling in background
+        _polling_task = asyncio.create_task(_run_polling())
+        logger.info("Polling mode active — bot will pull updates from Telegram")
 
     bg_task = asyncio.create_task(_background_loop())
     logger.info("Jarvis v3 started — 24 commands + free-chat + proactive AI")
     yield
 
     bg_task.cancel()
+    if _polling_task:
+        _polling_task.cancel()
     await bot_app.stop()
     await bot_app.shutdown()
+
+
+async def _run_polling() -> None:
+    """Pull updates from Telegram in a loop (fallback when webhook unavailable)."""
+    logger.info("Starting polling loop...")
+    offset = 0
+    while True:
+        try:
+            updates = await bot_app.bot.get_updates(offset=offset, timeout=30)
+            for update in updates:
+                offset = update.update_id + 1
+                await bot_app.process_update(update)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error("Polling error: %s", e)
+            await asyncio.sleep(5)
 
 
 app = FastAPI(title="Jarvis — Daily Analyst", version="3.0.0", lifespan=lifespan)
