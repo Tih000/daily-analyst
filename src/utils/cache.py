@@ -1,4 +1,4 @@
-"""SQLite local cache for Notion journal entries (last 30 days)."""
+"""SQLite local cache for Notion journal entries."""
 
 from __future__ import annotations
 
@@ -89,30 +89,34 @@ class CacheService:
             conn.commit()
 
     def upsert_entries(self, entries: list[JournalEntry]) -> int:
-        """Insert or update multiple journal entries. Returns count."""
+        """Insert or update multiple journal entries using batch insert. Returns count."""
+        now = datetime.now(timezone.utc).isoformat()
+        rows = [
+            (
+                entry.id,
+                entry.entry_date.isoformat(),
+                entry.mood.value if entry.mood else None,
+                entry.hours_worked,
+                entry.tasks_completed,
+                entry.testik.value if entry.testik else None,
+                int(entry.workout),
+                int(entry.university),
+                entry.earnings_usd,
+                entry.sleep_hours,
+                entry.notes,
+                now,
+            )
+            for entry in entries
+        ]
         with _get_connection() as conn:
-            for entry in entries:
-                conn.execute(
-                    """INSERT OR REPLACE INTO journal_entries
-                       (id, entry_date, mood, hours_worked, tasks_completed,
-                        testik, workout, university, earnings_usd, sleep_hours,
-                        notes, cached_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        entry.id,
-                        entry.entry_date.isoformat(),
-                        entry.mood.value if entry.mood else None,
-                        entry.hours_worked,
-                        entry.tasks_completed,
-                        entry.testik.value if entry.testik else None,
-                        int(entry.workout),
-                        int(entry.university),
-                        entry.earnings_usd,
-                        entry.sleep_hours,
-                        entry.notes,
-                        datetime.now(timezone.utc).isoformat(),
-                    ),
-                )
+            conn.executemany(
+                """INSERT OR REPLACE INTO journal_entries
+                   (id, entry_date, mood, hours_worked, tasks_completed,
+                    testik, workout, university, earnings_usd, sleep_hours,
+                    notes, cached_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
             conn.commit()
         logger.info("Cached %d entries", len(entries))
         return len(entries)

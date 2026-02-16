@@ -1,6 +1,6 @@
 [project]
 name = "daily-analyst"
-version = "1.0.0"
+version = "3.0.0"
 description = "Telegram AI-Agent for productivity journaling with Notion"
 requires-python = ">=3.11"
 

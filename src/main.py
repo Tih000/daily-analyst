@@ -1,8 +1,8 @@
 """
-FastAPI application with Telegram bot webhook integration.
-
-Provides bot commands for productivity analysis using Notion journal data,
+Telegram bot for productivity analysis using Notion journal data,
 GPT-powered insights, and Matplotlib charts.
+
+Runs in long-polling mode (no webhook, no FastAPI).
 """
 
 from __future__ import annotations
@@ -10,27 +10,25 @@ from __future__ import annotations
 import functools
 import io
 import logging
-import secrets
+import signal
 import sys
 import time
 from collections import defaultdict
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import AsyncGenerator, Callable, Coroutine, Any
+from typing import Any, Callable, Coroutine
 
-import uvicorn
-from fastapi import FastAPI, Request, Response, status
-from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 
 from src.config import get_settings
-from src.models.journal_entry import JournalEntry
 from src.services.ai_analyzer import AIAnalyzer
 from src.services.charts_service import ChartsService
 from src.services.notion_service import NotionService
@@ -56,7 +54,7 @@ logger = logging.getLogger(__name__)
 # ── Rate limiter (in-memory with periodic cleanup) ──────────────────────────
 
 _rate_limits: dict[int, list[float]] = defaultdict(list)
-_RATE_LIMIT_CLEANUP_INTERVAL = 300  # clean up stale entries every 5 min
+_RATE_LIMIT_CLEANUP_INTERVAL = 300
 _last_cleanup: float = 0.0
 
 
@@ -65,7 +63,6 @@ def _check_rate_limit(user_id: int, max_per_minute: int) -> bool:
     global _last_cleanup
     now = time.time()
 
-    # Periodic cleanup of stale user entries
     if now - _last_cleanup > _RATE_LIMIT_CLEANUP_INTERVAL:
         stale_users = [
             uid for uid, timestamps in _rate_limits.items()
@@ -90,11 +87,6 @@ notion_service = NotionService(cache=cache_service)
 ai_analyzer = AIAnalyzer()
 charts_service = ChartsService()
 
-# ── Telegram bot application ────────────────────────────────────────────────
-
-settings = get_settings()
-bot_app = Application.builder().token(settings.telegram.bot_token).build()
-
 
 # ── Auth & rate limit decorator ─────────────────────────────────────────────
 
@@ -103,25 +95,27 @@ def authorized(func: Callable[..., Coroutine[Any, Any, None]]) -> Callable[..., 
 
     @functools.wraps(func)
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not update.effective_user or not update.message:
+        user = update.effective_user
+        message = update.message or (update.callback_query.message if update.callback_query else None)
+        if not user or not message:
             return
 
-        user_id = update.effective_user.id
+        user_id = user.id
         s = get_settings()
 
         if not validate_user_id(user_id, s.telegram.allowed_user_ids):
-            await update.message.reply_text("🚫 Нет доступа. Обратись к администратору.")
+            await message.reply_text("🚫 Нет доступа. Обратись к администратору.")
             return
 
         if not _check_rate_limit(user_id, s.app.rate_limit_per_minute):
-            await update.message.reply_text("⏳ Слишком много запросов. Подожди минутку.")
+            await message.reply_text("⏳ Слишком много запросов. Подожди минутку.")
             return
 
         try:
             await func(update, context)
         except Exception as e:
             logger.error("Command error for user %s: %s", user_id, e, exc_info=True)
-            await update.message.reply_text(f"⚠️ Ошибка: {e}")
+            await message.reply_text("⚠️ Произошла ошибка при обработке команды. Попробуй позже.")
 
     return wrapper
 
@@ -180,14 +174,39 @@ def _month_picker_keyboard(command_prefix: str) -> InlineKeyboardMarkup:
     if row:
         buttons.append(row)
     buttons.append([InlineKeyboardButton("« Назад", callback_data="menu_back")])
-    return buttons and InlineKeyboardMarkup(buttons) or InlineKeyboardMarkup([])
+    return InlineKeyboardMarkup(buttons)
 
 
 async def _send_typing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send 'typing' chat action to show bot is processing."""
     chat_id = update.effective_chat.id if update.effective_chat else None
     if chat_id:
-        await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        try:
+            await context.bot.send_chat_action(chat_id=chat_id, action=ChatAction.TYPING)
+        except Exception:
+            pass  # non-critical, don't break command flow
+
+
+def _get_message(update: Update):
+    """Extract the usable message object from update (command or callback)."""
+    return update.message or (update.callback_query.message if update.callback_query else None)
+
+
+async def _safe_send_chart(
+    update: Update, context: ContextTypes.DEFAULT_TYPE,
+    chart_fn: Callable[..., bytes], caption: str, *args: Any,
+) -> None:
+    """Generate and send a chart, catching matplotlib errors gracefully."""
+    message = _get_message(update)
+    if not message:
+        return
+    try:
+        await _send_typing(update, context)
+        chart_bytes = chart_fn(*args)
+        await message.reply_photo(photo=io.BytesIO(chart_bytes), caption=caption)
+    except Exception as e:
+        logger.error("Chart generation failed: %s", e, exc_info=True)
+        await message.reply_text("⚠️ Не удалось сгенерировать график.")
 
 
 # ── Bot commands ────────────────────────────────────────────────────────────
@@ -195,7 +214,8 @@ async def _send_typing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 @authorized
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/start — welcome message with main menu."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     text = (
@@ -204,15 +224,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "Выбери команду из меню ниже или введи вручную:\n"
         "/help — список всех команд"
     )
-    await update.message.reply_text(
-        text, parse_mode="Markdown", reply_markup=_main_menu_keyboard()
-    )
+    await message.reply_text(text, parse_mode="Markdown", reply_markup=_main_menu_keyboard())
 
 
 @authorized
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/help — full command list with descriptions."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     text = (
@@ -231,9 +250,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "💡 _Данные кэшируются на 5 минут. "
         "Месяц можно указать как: 2025-01, january, январь, 1_"
     )
-    await update.message.reply_text(
-        text, parse_mode="Markdown", reply_markup=_main_menu_keyboard()
-    )
+    await message.reply_text(text, parse_mode="Markdown", reply_markup=_main_menu_keyboard())
 
 
 @authorized
@@ -243,7 +260,6 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     arg = sanitize_command_arg(update.message.text or "")
-
     if not arg:
         await update.message.reply_text(
             "📊 *Выбери месяц для анализа:*",
@@ -257,7 +273,7 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def _run_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str) -> None:
     """Shared logic for /analyze command and callback."""
-    message = update.message or (update.callback_query.message if update.callback_query else None)
+    message = _get_message(update)
     if not message:
         return
 
@@ -294,26 +310,25 @@ async def _run_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: 
         text += f"📉 Худший день: {w.entry_date} (score: {w.productivity_score})\n"
 
     text += f"\n🤖 *AI Insights:*\n{analysis.ai_insights}"
-
     await message.reply_text(truncate_text(text), parse_mode="Markdown")
 
     if entries:
-        await _send_typing(update, context)
-        chart_bytes = charts_service.monthly_overview(entries, month_label)
-        await message.reply_photo(
-            photo=io.BytesIO(chart_bytes),
-            caption=f"📈 Графики за {month_label}",
+        await _safe_send_chart(
+            update, context,
+            charts_service.monthly_overview, f"📈 Графики за {month_label}",
+            entries, month_label,
         )
 
 
 @authorized
 async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/predict — burnout risk for next 5 days."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("🔮 Оцениваю риск выгорания...")
+    await message.reply_text("🔮 Оцениваю риск выгорания...")
 
     entries = await notion_service.get_recent(days=30)
     await _send_typing(update, context)
@@ -329,15 +344,13 @@ async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     for f in risk.factors:
         text += f"  • {f}\n"
     text += f"\n💡 *Рекомендации:*\n{risk.recommendation}"
-
-    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+    await message.reply_text(truncate_text(text), parse_mode="Markdown")
 
     if len(entries) >= 3:
-        await _send_typing(update, context)
-        chart_bytes = charts_service.burnout_chart(entries)
-        await update.message.reply_photo(
-            photo=io.BytesIO(chart_bytes),
-            caption="📊 Индекс риска выгорания",
+        await _safe_send_chart(
+            update, context,
+            charts_service.burnout_chart, "📊 Индекс риска выгорания",
+            entries,
         )
 
 
@@ -348,7 +361,6 @@ async def cmd_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     arg = sanitize_command_arg(update.message.text or "")
-
     if not arg:
         await update.message.reply_text(
             "🏆 *Выбери месяц:*",
@@ -362,7 +374,7 @@ async def cmd_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 async def _run_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE, arg: str) -> None:
     """Shared logic for /best_days command and callback."""
-    message = update.message or (update.callback_query.message if update.callback_query else None)
+    message = _get_message(update)
     if not message:
         return
 
@@ -397,17 +409,18 @@ async def _run_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE, arg
 @authorized
 async def cmd_optimal_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/optimal_hours — best working hours analysis."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("⏰ Анализирую оптимальное время работы...")
+    await message.reply_text("⏰ Анализирую оптимальное время работы...")
 
     entries = await notion_service.get_recent(days=60)
     await _send_typing(update, context)
     result = await ai_analyzer.optimal_hours(entries)
 
-    await update.message.reply_text(
+    await message.reply_text(
         truncate_text(f"⏰ *Оптимальные часы работы*\n\n{result}"), parse_mode="Markdown"
     )
 
@@ -415,17 +428,18 @@ async def cmd_optimal_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 @authorized
 async def cmd_kate_impact(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/kate_impact — relationship correlation analysis."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("💕 Анализирую корреляции...")
+    await message.reply_text("💕 Анализирую корреляции...")
 
     entries = await notion_service.get_recent(days=90)
     await _send_typing(update, context)
     result = await ai_analyzer.kate_impact(entries)
 
-    await update.message.reply_text(
+    await message.reply_text(
         truncate_text(f"💕 *Влияние отношений*\n\n{result}"), parse_mode="Markdown"
     )
 
@@ -433,95 +447,96 @@ async def cmd_kate_impact(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 @authorized
 async def cmd_testik_patterns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/testik_patterns — TESTIK influence analysis."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("🧪 Анализирую паттерны TESTIK...")
+    await message.reply_text("🧪 Анализирую паттерны TESTIK...")
 
     entries = await notion_service.get_recent(days=90)
     await _send_typing(update, context)
     result = await ai_analyzer.testik_patterns(entries)
 
-    await update.message.reply_text(
+    await message.reply_text(
         truncate_text(f"🧪 *Паттерны TESTIK*\n\n{result}"), parse_mode="Markdown"
     )
 
     if entries:
-        await _send_typing(update, context)
-        chart_bytes = charts_service.testik_chart(entries)
-        await update.message.reply_photo(
-            photo=io.BytesIO(chart_bytes),
-            caption="📊 TESTIK vs Метрики",
+        await _safe_send_chart(
+            update, context,
+            charts_service.testik_chart, "📊 TESTIK vs Метрики",
+            entries,
         )
 
 
 @authorized
 async def cmd_sleep_optimizer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/sleep_optimizer — sleep optimization advice."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("😴 Анализирую паттерны сна...")
+    await message.reply_text("😴 Анализирую паттерны сна...")
 
     entries = await notion_service.get_recent(days=60)
     await _send_typing(update, context)
     result = await ai_analyzer.sleep_optimizer(entries)
 
-    await update.message.reply_text(
+    await message.reply_text(
         truncate_text(f"😴 *Оптимизация сна*\n\n{result}"), parse_mode="Markdown"
     )
 
     if entries:
-        await _send_typing(update, context)
-        chart_bytes = charts_service.sleep_chart(entries)
-        await update.message.reply_photo(
-            photo=io.BytesIO(chart_bytes),
-            caption="📊 Сон vs Продуктивность",
+        await _safe_send_chart(
+            update, context,
+            charts_service.sleep_chart, "📊 Сон vs Продуктивность",
+            entries,
         )
 
 
 @authorized
 async def cmd_money_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/money_forecast — earnings forecast."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("💰 Строю прогноз заработка...")
+    await message.reply_text("💰 Строю прогноз заработка...")
 
     entries = await notion_service.get_recent(days=90)
     await _send_typing(update, context)
     result = await ai_analyzer.money_forecast(entries)
 
-    await update.message.reply_text(
+    await message.reply_text(
         truncate_text(f"💰 *Прогноз заработка*\n\n{result}"), parse_mode="Markdown"
     )
 
     if entries:
-        await _send_typing(update, context)
-        chart_bytes = charts_service.earnings_chart(entries)
-        await update.message.reply_photo(
-            photo=io.BytesIO(chart_bytes),
-            caption="📊 Динамика заработка",
+        await _safe_send_chart(
+            update, context,
+            charts_service.earnings_chart, "📊 Динамика заработка",
+            entries,
         )
 
 
 @authorized
 async def cmd_weak_spots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/weak_spots — identify weak productivity areas."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("🔍 Ищу слабые места...")
+    await message.reply_text("🔍 Ищу слабые места...")
 
     entries = await notion_service.get_recent(days=30)
     await _send_typing(update, context)
     result = await ai_analyzer.weak_spots(entries)
 
-    await update.message.reply_text(
+    await message.reply_text(
         truncate_text(f"🔍 *Слабые места*\n\n{result}"), parse_mode="Markdown"
     )
 
@@ -529,17 +544,18 @@ async def cmd_weak_spots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 @authorized
 async def cmd_tomorrow_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/tomorrow_mood — predict tomorrow's mood."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("🔮 Предсказываю завтрашнее настроение...")
+    await message.reply_text("🔮 Предсказываю завтрашнее настроение...")
 
     entries = await notion_service.get_recent(days=14)
     await _send_typing(update, context)
     result = await ai_analyzer.tomorrow_mood(entries)
 
-    await update.message.reply_text(
+    await message.reply_text(
         truncate_text(f"🔮 *Прогноз настроения*\n\n{result}"), parse_mode="Markdown"
     )
 
@@ -547,24 +563,36 @@ async def cmd_tomorrow_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 @authorized
 async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/sync — manually sync Notion data (authorized users only)."""
-    if not update.message:
+    message = _get_message(update)
+    if not message:
         return
 
     await _send_typing(update, context)
-    await update.message.reply_text("🔄 Синхронизирую данные из Notion...")
+    await message.reply_text("🔄 Синхронизирую данные из Notion...")
 
     count = await notion_service.sync_all()
-    await update.message.reply_text(
+    await message.reply_text(
         f"✅ Синхронизировано записей: *{count}*\n"
         f"🕐 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
         parse_mode="Markdown",
     )
 
 
+async def cmd_unknown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle unknown commands with a helpful message."""
+    if not update.message:
+        return
+    await update.message.reply_text(
+        "❓ Неизвестная команда. Нажми /help для списка команд.",
+        reply_markup=_main_menu_keyboard(),
+    )
+
+
 # ── Callback query handler (inline keyboard) ────────────────────────────────
 
+@authorized
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle inline keyboard button presses."""
+    """Handle inline keyboard button presses (with auth check)."""
     query = update.callback_query
     if not query or not query.data:
         return
@@ -572,7 +600,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
     data = query.data
 
-    # Route menu buttons to commands
+    # Direct command routes (no extra args needed)
     command_map: dict[str, Callable[..., Coroutine[Any, Any, None]]] = {
         "menu_predict": cmd_predict,
         "menu_optimal_hours": cmd_optimal_hours,
@@ -586,14 +614,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     }
 
     if data in command_map:
-        # Create a fake message so authorized decorator and handlers work
-        fake_update = Update(
-            update_id=update.update_id,
-            message=query.message,
-            callback_query=query,
-        )
-        fake_update._effective_user = update.effective_user  # noqa: SLF001
-        await command_map[data](fake_update, context)
+        await command_map[data](update, context)
         return
 
     if data == "menu_analyze":
@@ -620,7 +641,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return
 
-    # Handle month picker callbacks: analyze_2025-01, best_days_2025-01
+    # Month picker callbacks: analyze_2025-01, best_days_2025-01
     if data.startswith("analyze_"):
         month_arg = data.removeprefix("analyze_")
         await _run_analyze(update, context, month_arg)
@@ -632,93 +653,51 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
 
-# ── Register handlers ───────────────────────────────────────────────────────
+# ── Build & run application ─────────────────────────────────────────────────
 
-bot_app.add_handler(CommandHandler("start", cmd_start))
-bot_app.add_handler(CommandHandler("help", cmd_help))
-bot_app.add_handler(CommandHandler("analyze", cmd_analyze))
-bot_app.add_handler(CommandHandler("predict", cmd_predict))
-bot_app.add_handler(CommandHandler("best_days", cmd_best_days))
-bot_app.add_handler(CommandHandler("optimal_hours", cmd_optimal_hours))
-bot_app.add_handler(CommandHandler("kate_impact", cmd_kate_impact))
-bot_app.add_handler(CommandHandler("testik_patterns", cmd_testik_patterns))
-bot_app.add_handler(CommandHandler("sleep_optimizer", cmd_sleep_optimizer))
-bot_app.add_handler(CommandHandler("money_forecast", cmd_money_forecast))
-bot_app.add_handler(CommandHandler("weak_spots", cmd_weak_spots))
-bot_app.add_handler(CommandHandler("tomorrow_mood", cmd_tomorrow_mood))
-bot_app.add_handler(CommandHandler("sync", cmd_sync))
-bot_app.add_handler(CallbackQueryHandler(handle_callback))
+def _build_app() -> Application:
+    """Build the Telegram Application with all handlers registered."""
+    settings = get_settings()
+    app = Application.builder().token(settings.telegram.bot_token).build()
+
+    # Command handlers
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("analyze", cmd_analyze))
+    app.add_handler(CommandHandler("predict", cmd_predict))
+    app.add_handler(CommandHandler("best_days", cmd_best_days))
+    app.add_handler(CommandHandler("optimal_hours", cmd_optimal_hours))
+    app.add_handler(CommandHandler("kate_impact", cmd_kate_impact))
+    app.add_handler(CommandHandler("testik_patterns", cmd_testik_patterns))
+    app.add_handler(CommandHandler("sleep_optimizer", cmd_sleep_optimizer))
+    app.add_handler(CommandHandler("money_forecast", cmd_money_forecast))
+    app.add_handler(CommandHandler("weak_spots", cmd_weak_spots))
+    app.add_handler(CommandHandler("tomorrow_mood", cmd_tomorrow_mood))
+    app.add_handler(CommandHandler("sync", cmd_sync))
+
+    # Callback query handler for inline keyboards
+    app.add_handler(CallbackQueryHandler(handle_callback))
+
+    # Unknown command handler (must be last)
+    app.add_handler(MessageHandler(filters.COMMAND, cmd_unknown))
+
+    return app
 
 
-# ── FastAPI app ─────────────────────────────────────────────────────────────
+def main() -> None:
+    """Entry point: build bot and start polling."""
+    logger.info("Starting Daily Analyst bot (polling mode)")
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Startup/shutdown: initialize bot and set webhook."""
-    await bot_app.initialize()
-    await bot_app.start()
+    app = _build_app()
 
-    s = get_settings()
-    webhook_url = s.telegram.webhook_url
-    if webhook_url:
-        kwargs: dict[str, Any] = {"url": webhook_url}
-        if s.telegram.webhook_secret:
-            kwargs["secret_token"] = s.telegram.webhook_secret
-        await bot_app.bot.set_webhook(**kwargs)
-        logger.info("Webhook set to %s (secret: %s)", webhook_url, "yes" if s.telegram.webhook_secret else "no")
-    else:
-        logger.warning("No TELEGRAM_WEBHOOK_URL set — webhook not configured")
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+        close_loop=False,
+    )
 
-    logger.info("Daily Analyst bot started")
-    yield
-
-    await bot_app.stop()
-    await bot_app.shutdown()
     logger.info("Bot stopped")
 
 
-app = FastAPI(
-    title="Daily Analyst Bot",
-    version="2.0.0",
-    lifespan=lifespan,
-)
-
-
-@app.get("/health")
-async def health() -> dict[str, str]:
-    """Health check endpoint."""
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
-
-
-@app.post("/webhook")
-async def telegram_webhook(request: Request) -> Response:
-    """Receive Telegram updates via webhook with secret token verification."""
-    s = get_settings()
-
-    # Verify webhook secret if configured
-    if s.telegram.webhook_secret:
-        token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not secrets.compare_digest(token, s.telegram.webhook_secret):
-            logger.warning("Webhook request with invalid secret token")
-            return Response(status_code=status.HTTP_403_FORBIDDEN)
-
-    try:
-        data = await request.json()
-        update = Update.de_json(data, bot_app.bot)
-        await bot_app.process_update(update)
-        return Response(status_code=status.HTTP_200_OK)
-    except Exception as e:
-        logger.error("Webhook error: %s", e, exc_info=True)
-        return Response(status_code=status.HTTP_200_OK)
-
-
-# ── Entry point ─────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
-    uvicorn.run(
-        "src.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=not settings.app.is_production,
-        log_level=settings.app.log_level.lower(),
-    )
+    main()

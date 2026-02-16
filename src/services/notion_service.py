@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any, Optional
 
 import httpx
@@ -20,7 +20,7 @@ NOTION_VERSION = "2022-06-28"
 
 
 class NotionService:
-    """Async Notion client with retry logic and local caching."""
+    """Async Notion client with retry logic, connection pooling, and local caching."""
 
     def __init__(self, cache: Optional[CacheService] = None) -> None:
         settings = get_settings()
@@ -32,6 +32,22 @@ class NotionService:
             "Notion-Version": NOTION_VERSION,
             "Content-Type": "application/json",
         }
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create a reusable httpx client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                headers=self._headers,
+                timeout=30,
+            )
+        return self._client
+
+    async def close(self) -> None:
+        """Close the httpx client (call on shutdown)."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -53,7 +69,6 @@ class NotionService:
             logger.debug("Serving from cache")
             return self._cache.get_entries(start_date, end_date)
 
-        # Fetch from Notion
         if start_date is None:
             start_date = date.today() - timedelta(days=90)
         if end_date is None:
@@ -63,7 +78,6 @@ class NotionService:
         entries = [self._parse_page(page) for page in raw_pages]
         entries = [e for e in entries if e is not None]
 
-        # Update cache
         if entries:
             self._cache.upsert_entries(entries)
             self._cache.mark_synced()
@@ -128,22 +142,21 @@ class NotionService:
             "page_size": 100,
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            while has_more:
-                if next_cursor:
-                    filter_body["start_cursor"] = next_cursor
+        client = await self._get_client()
+        while has_more:
+            if next_cursor:
+                filter_body["start_cursor"] = next_cursor
 
-                resp = await client.post(
-                    f"{NOTION_API}/databases/{self._database_id}/query",
-                    headers=self._headers,
-                    json=filter_body,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            resp = await client.post(
+                f"{NOTION_API}/databases/{self._database_id}/query",
+                json=filter_body,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-                all_pages.extend(data.get("results", []))
-                has_more = data.get("has_more", False)
-                next_cursor = data.get("next_cursor")
+            all_pages.extend(data.get("results", []))
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
 
         logger.info("Fetched %d pages from Notion", len(all_pages))
         return all_pages
@@ -187,7 +200,7 @@ def _get_date(props: dict, name: str) -> Optional[str]:
     prop = props.get(name, {})
     date_obj = prop.get("date")
     if date_obj and date_obj.get("start"):
-        return date_obj["start"][:10]  # "2025-01-15" from possible datetime
+        return date_obj["start"][:10]
     return None
 
 

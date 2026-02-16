@@ -59,12 +59,16 @@ class TestSanitizeCommandArg:
 
 class TestValidateUserId:
     def test_empty_allows_all(self) -> None:
-        assert validate_user_id(123, []) is True
+        assert validate_user_id(123, frozenset()) is True
 
-    def test_in_list(self) -> None:
+    def test_in_set(self) -> None:
+        assert validate_user_id(123, frozenset({123, 456})) is True
+
+    def test_not_in_set(self) -> None:
+        assert validate_user_id(789, frozenset({123, 456})) is False
+
+    def test_list_still_works(self) -> None:
         assert validate_user_id(123, [123, 456]) is True
-
-    def test_not_in_list(self) -> None:
         assert validate_user_id(789, [123, 456]) is False
 
 

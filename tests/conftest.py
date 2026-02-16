@@ -11,7 +11,6 @@ import pytest
 
 # Set test env before importing app modules
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token-123")
-os.environ.setdefault("TELEGRAM_WEBHOOK_SECRET", "test-secret")
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-key-456")
 os.environ.setdefault("NOTION_TOKEN", "secret_test_notion_token")
 os.environ.setdefault("NOTION_DATABASE_ID", "test-db-id-789")

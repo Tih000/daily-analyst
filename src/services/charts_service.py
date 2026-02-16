@@ -1,4 +1,4 @@
-"""Chart generation service using Matplotlib (+ optional Google Sheets)."""
+"""Chart generation service using Matplotlib."""
 
 from __future__ import annotations
 

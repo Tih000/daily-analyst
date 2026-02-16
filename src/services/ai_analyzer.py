@@ -5,8 +5,7 @@ from __future__ import annotations
 import logging
 import statistics
 from collections import Counter
-from datetime import date, timedelta
-from typing import Any, Optional
+from typing import Optional
 
 import openai
 from tenacity import (
@@ -19,14 +18,11 @@ from tenacity import (
 from src.config import get_settings
 from src.models.journal_entry import (
     BurnoutRisk,
-    CorrelationResult,
     DaySummary,
-    ForecastResult,
     JournalEntry,
     MonthAnalysis,
     Mood,
     Testik,
-    WeakSpot,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,7 +34,6 @@ SYSTEM_PROMPT = """Ты эксперт по продуктивности. Ана
 - Чёткие метрики и цифры
 Отвечай кратко, с эмодзи, actionable insights. На русском языке."""
 
-# Retry on transient OpenAI errors
 _RETRY_EXCEPTIONS = (
     openai.RateLimitError,
     openai.APITimeoutError,
@@ -77,10 +72,10 @@ class AIAnalyzer:
             )
             return response.choices[0].message.content or ""
         except _RETRY_EXCEPTIONS:
-            raise  # let tenacity handle retries
+            raise
         except Exception as e:
             logger.error("GPT call failed: %s", e)
-            return f"⚠️ AI анализ недоступен: {e}"
+            return "⚠️ AI анализ временно недоступен. Попробуй позже."
 
     # ── Entries to text ─────────────────────────────────────────────────────
 
@@ -97,7 +92,6 @@ class AIAnalyzer:
 
         sorted_entries = sorted(entries, key=lambda x: x.entry_date)
 
-        # Aggregate stats for full period
         mood_scores = [e.mood.score for e in sorted_entries if e.mood]
         sleep_vals = [e.sleep_hours for e in sorted_entries]
         work_vals = [e.hours_worked for e in sorted_entries]
@@ -117,7 +111,6 @@ class AIAnalyzer:
             f"Тренировки: {workout_count}/{len(sorted_entries)}, Универ: {uni_count}/{len(sorted_entries)}",
         ]
 
-        # Detailed lines for recent entries (with notes)
         recent = sorted_entries[-max_detailed:]
         detail_lines: list[str] = []
         for e in recent:
@@ -207,7 +200,6 @@ class AIAnalyzer:
         factors: list[str] = []
         risk = 0.0
 
-        # Factor: consecutive MINUS TESTIK
         last_testiks = [e.testik for e in recent[:7] if e.testik]
         minus_streak = 0
         for t in last_testiks:
@@ -222,7 +214,6 @@ class AIAnalyzer:
             risk += 15
             factors.append(f"🟡 {minus_streak} MINUS TESTIK подряд")
 
-        # Factor: low sleep
         avg_sleep = statistics.mean([e.sleep_hours for e in recent[:7]])
         if avg_sleep < 6:
             risk += 25
@@ -231,7 +222,6 @@ class AIAnalyzer:
             risk += 10
             factors.append(f"💤 Средний сон: {avg_sleep:.1f}ч (<7ч)")
 
-        # Factor: mood trend
         moods = [e.mood.score for e in recent[:7] if e.mood]
         if len(moods) >= 3:
             mood_trend = moods[0] - statistics.mean(moods)
@@ -239,13 +229,11 @@ class AIAnalyzer:
                 risk += 20
                 factors.append("📉 Настроение падает")
 
-        # Factor: overwork
         avg_work = statistics.mean([e.hours_worked for e in recent[:7]])
         if avg_work > 10:
             risk += 15
             factors.append(f"⏰ Переработка: {avg_work:.1f}ч/день")
 
-        # Factor: no workout streak
         no_workout = sum(1 for e in recent[:7] if not e.workout)
         if no_workout >= 5:
             risk += 10

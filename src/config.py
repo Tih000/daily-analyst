@@ -11,20 +11,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _list_from_env(key: str) -> list[int]:
-    """Parse comma-separated list of integers from env variable."""
+def _frozenset_from_env(key: str) -> frozenset[int]:
+    """Parse comma-separated list of integers from env variable into a frozenset."""
     raw = os.getenv(key, "")
     if not raw:
-        return []
-    return [int(x.strip()) for x in raw.split(",") if x.strip()]
+        return frozenset()
+    return frozenset(int(x.strip()) for x in raw.split(",") if x.strip())
 
 
 @dataclass(frozen=True)
 class TelegramConfig:
     bot_token: str = field(default_factory=lambda: os.environ["TELEGRAM_BOT_TOKEN"])
-    webhook_url: str = field(default_factory=lambda: os.getenv("TELEGRAM_WEBHOOK_URL", ""))
-    webhook_secret: str = field(default_factory=lambda: os.getenv("TELEGRAM_WEBHOOK_SECRET", ""))
-    allowed_user_ids: list[int] = field(default_factory=lambda: _list_from_env("ALLOWED_USER_IDS"))
+    allowed_user_ids: frozenset[int] = field(
+        default_factory=lambda: _frozenset_from_env("ALLOWED_USER_IDS")
+    )
 
 
 @dataclass(frozen=True)
