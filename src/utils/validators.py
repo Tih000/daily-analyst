@@ -1,20 +1,106 @@
-"""Input validation helpers for Telegram commands."""
+"""Input validation and text parsing helpers."""
 
 from __future__ import annotations
 
 import re
 from datetime import date
-from typing import Tuple
+from typing import Optional, Tuple
+
+from src.models.journal_entry import DayRating, SleepInfo, TestikStatus
+
+
+# ── Parsing MARK entry body text ────────────────────────────────────────────
+
+
+def parse_sleep_info(text: str) -> SleepInfo:
+    """
+    Extract sleep data from MARK entry body.
+
+    Looks for patterns like:
+        "Woke up at 12:30"
+        "Sleep time 8:54"
+        "Recovery 81 by Apple Watch"
+    """
+    woke_up_at: Optional[str] = None
+    sleep_duration: Optional[str] = None
+    sleep_hours: Optional[float] = None
+    recovery: Optional[int] = None
+
+    # "Woke up at 12:30" or "woke up at 8:00"
+    woke_match = re.search(r"[Ww]oke\s+up\s+at\s+(\d{1,2}[:.]\d{2})", text)
+    if woke_match:
+        woke_up_at = woke_match.group(1).replace(".", ":")
+
+    # "Sleep time 8:54" or "sleep time 7:30"
+    sleep_match = re.search(r"[Ss]leep\s+time\s+(\d{1,2})[:.:](\d{2})", text)
+    if sleep_match:
+        hours_part = int(sleep_match.group(1))
+        mins_part = int(sleep_match.group(2))
+        sleep_duration = f"{hours_part}:{mins_part:02d}"
+        sleep_hours = round(hours_part + mins_part / 60, 2)
+
+    # "Recovery 81" or "recovery 75 by Apple Watch"
+    recovery_match = re.search(r"[Rr]ecovery\s+(\d{1,3})", text)
+    if recovery_match:
+        recovery = int(recovery_match.group(1))
+
+    return SleepInfo(
+        woke_up_at=woke_up_at,
+        sleep_duration=sleep_duration,
+        sleep_hours=sleep_hours,
+        recovery=recovery,
+    )
+
+
+def parse_testik(text: str) -> Optional[TestikStatus]:
+    """
+    Extract TESTIK status from MARK entry body.
+
+    Patterns (case-insensitive):
+        "MINUS TESTIK KATE"  → MINUS_KATE
+        "MINUS TESTIK"       → MINUS (solo)
+        "PLUS TESTIK"        → PLUS
+    """
+    text_upper = text.upper()
+
+    if "MINUS TESTIK KATE" in text_upper or "MINUS TEST KATE" in text_upper:
+        return TestikStatus.MINUS_KATE
+    if "MINUS TESTIK" in text_upper or "MINUS TEST" in text_upper:
+        return TestikStatus.MINUS
+    if "PLUS TESTIK" in text_upper or "PLUS TEST" in text_upper:
+        return TestikStatus.PLUS
+
+    return None
+
+
+def parse_day_rating(text: str) -> Optional[DayRating]:
+    """
+    Extract daily rating from MARK entry body.
+
+    Looks for "MARK: good" / "MARK: very bad" etc. at the end of the text.
+    """
+    # Match "MARK: <rating>" (case-insensitive)
+    match = re.search(r"MARK\s*:\s*(very\s+good|very\s+bad|perfect|good|normal|bad)", text, re.IGNORECASE)
+    if match:
+        raw = match.group(1).strip().lower()
+        # Normalize whitespace
+        raw = re.sub(r"\s+", " ", raw)
+        try:
+            return DayRating(raw)
+        except ValueError:
+            pass
+    return None
+
+
+# ── Month argument parsing ──────────────────────────────────────────────────
 
 
 def parse_month_arg(text: str) -> Tuple[int, int]:
     """
-    Parse month argument from user input.
+    Parse month from user input.
 
-    Accepts: "2025-01", "january", "01", "1", empty (current month).
-    Returns (year, month).
-
-    Raises ValueError if unparseable.
+    Accepts: "2025-01", "january", "январь", "01", "1", empty (current month).
+    Returns (year, month). Raises ValueError if unparseable.
     """
     text = text.strip().lower()
 
@@ -35,8 +121,8 @@ def parse_month_arg(text: str) -> Tuple[int, int]:
         _validate_month(month)
         return date.today().year, month
 
-    # English month name
-    month_names = {
+    # English month names
+    en_months = {
         "january": 1, "february": 2, "march": 3, "april": 4,
         "may": 5, "june": 6, "july": 7, "august": 8,
         "september": 9, "october": 10, "november": 11, "december": 12,
@@ -44,8 +130,8 @@ def parse_month_arg(text: str) -> Tuple[int, int]:
         "jun": 6, "jul": 7, "aug": 8, "sep": 9,
         "oct": 10, "nov": 11, "dec": 12,
     }
-    if text in month_names:
-        return date.today().year, month_names[text]
+    if text in en_months:
+        return date.today().year, en_months[text]
 
     # Russian month names
     ru_months = {
@@ -56,12 +142,15 @@ def parse_month_arg(text: str) -> Tuple[int, int]:
     if text in ru_months:
         return date.today().year, ru_months[text]
 
-    raise ValueError(f"Cannot parse month from: '{text}'")
+    raise ValueError(f"Не могу распознать месяц: '{text}'")
 
 
 def _validate_month(month: int) -> None:
     if not 1 <= month <= 12:
-        raise ValueError(f"Month must be 1-12, got {month}")
+        raise ValueError(f"Месяц должен быть 1-12, получено {month}")
+
+
+# ── Utility helpers ─────────────────────────────────────────────────────────
 
 
 def sanitize_command_arg(text: str) -> str:
@@ -70,15 +159,15 @@ def sanitize_command_arg(text: str) -> str:
     return parts[1].strip() if len(parts) > 1 else ""
 
 
-def validate_user_id(user_id: int, allowed_ids: frozenset[int] | list[int]) -> bool:
-    """Check if user is authorized. Empty collection = allow all."""
+def validate_user_id(user_id: int, allowed_ids: list[int]) -> bool:
+    """Check if user is authorized. Empty list = allow all."""
     if not allowed_ids:
         return True
     return user_id in allowed_ids
 
 
 def format_number(value: float, decimals: int = 1) -> str:
-    """Format number nicely: 1234.5 → '1,234.5'."""
+    """Format number: 1234.5 → '1,234.5'."""
     if value == int(value):
         return f"{int(value):,}"
     return f"{value:,.{decimals}f}"
@@ -90,7 +179,7 @@ def format_percentage(value: float) -> str:
 
 
 def truncate_text(text: str, max_length: int = 4000) -> str:
-    """Truncate text for Telegram message limit."""
+    """Truncate for Telegram message limit."""
     if len(text) <= max_length:
         return text
     return text[: max_length - 3] + "..."

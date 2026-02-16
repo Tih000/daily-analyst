@@ -5,74 +5,111 @@ from __future__ import annotations
 import os
 from datetime import date, timedelta
 from typing import Generator
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Set test env before importing app modules
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "test-token-123")
 os.environ.setdefault("OPENAI_API_KEY", "sk-test-key-456")
 os.environ.setdefault("NOTION_TOKEN", "secret_test_notion_token")
 os.environ.setdefault("NOTION_DATABASE_ID", "test-db-id-789")
 os.environ.setdefault("APP_ENV", "testing")
 
-from src.models.journal_entry import JournalEntry, Mood, Testik
-from src.utils.cache import CacheService, DB_PATH
+from src.models.journal_entry import (
+    DailyRecord,
+    DayRating,
+    SleepInfo,
+    TaskEntry,
+    TestikStatus,
+)
+from src.utils.cache import CacheService
 
 
 @pytest.fixture
-def sample_entries() -> list[JournalEntry]:
-    """Generate 14 days of sample journal entries for testing."""
-    entries: list[JournalEntry] = []
-    moods = [Mood.PERFECT, Mood.GOOD, Mood.GOOD, Mood.NORMAL, Mood.NORMAL,
-             Mood.BAD, Mood.GOOD, Mood.PERFECT, Mood.NORMAL, Mood.GOOD,
-             Mood.BAD, Mood.VERY_BAD, Mood.NORMAL, Mood.GOOD]
-    testiks = [Testik.PLUS, Testik.PLUS, Testik.MINUS_KATE, Testik.PLUS,
-               Testik.MINUS_SOLO, Testik.MINUS_KATE, Testik.PLUS, Testik.PLUS,
-               Testik.MINUS_SOLO, Testik.PLUS, Testik.MINUS_KATE, Testik.MINUS_KATE,
-               Testik.PLUS, Testik.PLUS]
-
+def sample_records() -> list[DailyRecord]:
+    """Generate 14 days of sample daily records."""
+    ratings = [
+        DayRating.PERFECT, DayRating.GOOD, DayRating.GOOD, DayRating.NORMAL,
+        DayRating.NORMAL, DayRating.BAD, DayRating.GOOD, DayRating.PERFECT,
+        DayRating.NORMAL, DayRating.GOOD, DayRating.BAD, DayRating.VERY_BAD,
+        DayRating.NORMAL, DayRating.VERY_GOOD,
+    ]
+    testiks = [
+        TestikStatus.PLUS, TestikStatus.PLUS, TestikStatus.MINUS_KATE,
+        TestikStatus.PLUS, TestikStatus.MINUS, TestikStatus.MINUS_KATE,
+        TestikStatus.PLUS, TestikStatus.PLUS, TestikStatus.MINUS,
+        TestikStatus.PLUS, TestikStatus.MINUS_KATE, TestikStatus.MINUS,
+        TestikStatus.PLUS, TestikStatus.PLUS,
+    ]
+    records: list[DailyRecord] = []
     for i in range(14):
-        entries.append(JournalEntry(
-            id=f"page-{i:03d}",
+        records.append(DailyRecord(
             entry_date=date.today() - timedelta(days=13 - i),
-            mood=moods[i],
-            hours_worked=6.0 + (i % 5),
-            tasks_completed=3 + (i % 4),
+            rating=ratings[i],
             testik=testiks[i],
-            workout=i % 3 == 0,
-            university=i % 4 == 0,
-            earnings_usd=50.0 * (i % 3),
-            sleep_hours=5.5 + (i % 4) * 0.5,
-            notes=f"Test note for day {i}",
+            sleep=SleepInfo(sleep_hours=5.5 + (i % 4) * 0.5, woke_up_at="10:00"),
+            activities=["MARK", "CODING", "GYM"] if i % 2 == 0 else ["MARK", "AI", "UNIVERSITY"],
+            total_hours=6.0 + (i % 5),
+            tasks_count=3 + (i % 4),
+            tasks_completed=2 + (i % 3),
+            had_workout=i % 2 == 0,
+            had_university=i % 3 == 0,
+            had_coding=i % 2 == 0,
+            had_kate=i % 5 == 0,
+            journal_text=f"Woke up at 10:00. Sleep time 7:30. Recovery 80.\nDay {i} notes.",
         ))
-    return entries
+    return records
 
 
 @pytest.fixture
-def burnout_entries() -> list[JournalEntry]:
-    """Entries that should trigger high burnout risk."""
-    entries: list[JournalEntry] = []
+def burnout_records() -> list[DailyRecord]:
+    """Records that should trigger high burnout risk."""
+    records: list[DailyRecord] = []
     for i in range(7):
-        entries.append(JournalEntry(
-            id=f"burn-{i:03d}",
+        records.append(DailyRecord(
             entry_date=date.today() - timedelta(days=6 - i),
-            mood=Mood.BAD if i < 5 else Mood.VERY_BAD,
-            hours_worked=11.0 + i * 0.5,
-            tasks_completed=2,
-            testik=Testik.MINUS_KATE if i < 4 else Testik.MINUS_SOLO,
-            workout=False,
-            university=False,
-            earnings_usd=0,
-            sleep_hours=5.0 - i * 0.2,
-            notes="Burnout test",
+            rating=DayRating.BAD if i < 5 else DayRating.VERY_BAD,
+            testik=TestikStatus.MINUS_KATE if i < 3 else TestikStatus.MINUS,
+            sleep=SleepInfo(sleep_hours=5.0 - i * 0.2),
+            activities=["MARK", "CODING"],
+            total_hours=11.0 + i * 0.5,
+            tasks_count=2,
+            tasks_completed=1,
+            had_workout=False,
+            had_university=False,
+            had_coding=True,
+            had_kate=False,
+            journal_text="MINUS TESTIK\nMARK: bad",
         ))
-    return entries
+    return records
+
+
+@pytest.fixture
+def sample_tasks() -> list[TaskEntry]:
+    """Sample task entries for testing."""
+    return [
+        TaskEntry(
+            id="task-001", title="MARK",
+            entry_date=date(2026, 2, 15),
+            tags=["MARK"], checkbox=True, hours=None,
+            body_text="Woke up at 12:30. Sleep time 8:54. Recovery 81 by Apple Watch\nMINUS TESTIK KATE\nMARK: good",
+        ),
+        TaskEntry(
+            id="task-002", title="GYM",
+            entry_date=date(2026, 2, 15),
+            tags=["GYM"], checkbox=True, hours=1.5,
+            body_text="",
+        ),
+        TaskEntry(
+            id="task-003", title="CODING",
+            entry_date=date(2026, 2, 15),
+            tags=["CODING"], checkbox=True, hours=3.0,
+            body_text="",
+        ),
+    ]
 
 
 @pytest.fixture
 def cache_service(tmp_path) -> Generator[CacheService, None, None]:
-    """Provide a CacheService backed by a temp database."""
     import src.utils.cache as cache_module
     original_path = cache_module.DB_PATH
     cache_module.DB_PATH = tmp_path / "test_cache.db"
@@ -83,36 +120,36 @@ def cache_service(tmp_path) -> Generator[CacheService, None, None]:
 
 @pytest.fixture
 def mock_notion_response() -> list[dict]:
-    """Sample Notion API response pages."""
+    """Sample Notion API response pages matching Tasks DB structure."""
     return [
         {
             "id": "page-001",
             "properties": {
-                "Date": {"date": {"start": "2025-01-15"}},
-                "Mood": {"select": {"name": "GOOD"}},
-                "Hours Worked": {"number": 7.5},
-                "Tasks Completed": {"number": 5},
-                "TESTIK": {"select": {"name": "PLUS"}},
-                "Workout": {"checkbox": True},
-                "University": {"checkbox": False},
-                "Earnings USD": {"number": 100},
-                "Sleep Hours": {"number": 7.5},
-                "Notes": {"rich_text": [{"plain_text": "Great day!"}]},
+                "Name": {"type": "title", "title": [{"plain_text": "MARK"}]},
+                "Date": {"date": {"start": "2026-02-15"}},
+                "Tags": {"multi_select": [{"name": "MARK"}]},
+                "Checkbox": {"checkbox": True},
+                "It took (hours)": {"number": None},
             },
         },
         {
             "id": "page-002",
             "properties": {
-                "Date": {"date": {"start": "2025-01-16"}},
-                "Mood": {"select": {"name": "BAD"}},
-                "Hours Worked": {"number": 4},
-                "Tasks Completed": {"number": 2},
-                "TESTIK": {"select": {"name": "MINUS_KATE"}},
-                "Workout": {"checkbox": False},
-                "University": {"checkbox": True},
-                "Earnings USD": {"number": 0},
-                "Sleep Hours": {"number": 5},
-                "Notes": {"rich_text": [{"plain_text": "Rough day."}]},
+                "Name": {"type": "title", "title": [{"plain_text": "GYM"}]},
+                "Date": {"date": {"start": "2026-02-15"}},
+                "Tags": {"multi_select": [{"name": "GYM"}]},
+                "Checkbox": {"checkbox": True},
+                "It took (hours)": {"number": 1.5},
+            },
+        },
+        {
+            "id": "page-003",
+            "properties": {
+                "Name": {"type": "title", "title": [{"plain_text": "CODING"}]},
+                "Date": {"date": {"start": "2026-02-15"}},
+                "Tags": {"multi_select": [{"name": "CODING"}]},
+                "Checkbox": {"checkbox": True},
+                "It took (hours)": {"number": 3.0},
             },
         },
     ]

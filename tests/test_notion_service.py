@@ -1,4 +1,4 @@
-"""Tests for Notion service (with mocked API calls)."""
+"""Tests for Notion service parsing (with mocked API)."""
 
 from __future__ import annotations
 
@@ -7,110 +7,109 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.models.journal_entry import JournalEntry, Mood, Testik
-from src.services.notion_service import NotionService, _get_checkbox, _get_date, _get_number, _get_rich_text, _get_select_enum
+from src.models.journal_entry import DayRating, TestikStatus
+from src.services.notion_service import (
+    NotionService,
+    _get_checkbox,
+    _get_date,
+    _get_multi_select,
+    _get_number,
+    _get_rich_text,
+    _get_title,
+)
 
 
-class TestNotionPropertyHelpers:
-    """Test Notion API response parsing helpers."""
+class TestPropertyHelpers:
+    def test_get_title(self) -> None:
+        props = {"Name": {"type": "title", "title": [{"plain_text": "MARK"}]}}
+        assert _get_title(props) == "MARK"
+
+    def test_get_title_empty(self) -> None:
+        assert _get_title({}) == ""
 
     def test_get_date_valid(self) -> None:
-        props = {"Date": {"date": {"start": "2025-01-15T10:00:00.000Z"}}}
-        assert _get_date(props, "Date") == "2025-01-15"
+        props = {"Date": {"date": {"start": "2026-02-15T10:00:00Z"}}}
+        assert _get_date(props, "Date") == "2026-02-15"
 
     def test_get_date_missing(self) -> None:
         assert _get_date({}, "Date") is None
-        assert _get_date({"Date": {"date": None}}, "Date") is None
 
     def test_get_number(self) -> None:
-        assert _get_number({"Hours": {"number": 7.5}}, "Hours") == 7.5
-        assert _get_number({"Hours": {"number": None}}, "Hours") == 0.0
-        assert _get_number({}, "Hours") == 0.0
+        assert _get_number({"H": {"number": 3.5}}, "H") == 3.5
+        assert _get_number({"H": {"number": None}}, "H") == 0.0
+        assert _get_number({}, "H") == 0.0
 
     def test_get_checkbox(self) -> None:
-        assert _get_checkbox({"W": {"checkbox": True}}, "W") is True
-        assert _get_checkbox({"W": {"checkbox": False}}, "W") is False
-        assert _get_checkbox({}, "W") is False
+        assert _get_checkbox({"C": {"checkbox": True}}, "C") is True
+        assert _get_checkbox({}, "C") is False
 
-    def test_get_select_enum(self) -> None:
-        props = {"Mood": {"select": {"name": "GOOD"}}}
-        assert _get_select_enum(props, "Mood", Mood) == Mood.GOOD
+    def test_get_multi_select(self) -> None:
+        props = {"Tags": {"multi_select": [{"name": "GYM"}, {"name": "CODING"}]}}
+        assert _get_multi_select(props, "Tags") == ["GYM", "CODING"]
 
-    def test_get_select_enum_unknown(self) -> None:
-        props = {"Mood": {"select": {"name": "UNKNOWN_VALUE"}}}
-        assert _get_select_enum(props, "Mood", Mood) is None
-
-    def test_get_select_enum_missing(self) -> None:
-        assert _get_select_enum({}, "Mood", Mood) is None
-
-    def test_get_rich_text(self) -> None:
-        props = {"Notes": {"rich_text": [
-            {"plain_text": "Hello "},
-            {"plain_text": "world"},
-        ]}}
-        assert _get_rich_text(props, "Notes") == "Hello world"
-
-    def test_get_rich_text_empty(self) -> None:
-        assert _get_rich_text({}, "Notes") == ""
+    def test_get_multi_select_empty(self) -> None:
+        assert _get_multi_select({}, "Tags") == []
 
 
 class TestNotionServiceParsing:
-    """Test page parsing from Notion API responses."""
+    def test_parse_page(self, mock_notion_response: list[dict]) -> None:
+        task = NotionService._parse_page(mock_notion_response[0])
+        assert task is not None
+        assert task.id == "page-001"
+        assert task.title == "MARK"
+        assert task.entry_date == date(2026, 2, 15)
+        assert task.checkbox is True
 
-    def test_parse_valid_page(self, mock_notion_response: list[dict]) -> None:
-        entry = NotionService._parse_page(mock_notion_response[0])
-        assert entry is not None
-        assert entry.id == "page-001"
-        assert entry.entry_date == date(2025, 1, 15)
-        assert entry.mood == Mood.GOOD
-        assert entry.hours_worked == 7.5
-        assert entry.tasks_completed == 5
-        assert entry.testik == Testik.PLUS
-        assert entry.workout is True
-        assert entry.university is False
-        assert entry.earnings_usd == 100
-        assert entry.sleep_hours == 7.5
-        assert entry.notes == "Great day!"
+    def test_parse_page_with_hours(self, mock_notion_response: list[dict]) -> None:
+        task = NotionService._parse_page(mock_notion_response[1])
+        assert task is not None
+        assert task.title == "GYM"
+        assert task.hours == 1.5
 
-    def test_parse_page_no_date(self) -> None:
+    def test_parse_no_date(self) -> None:
         page = {"id": "no-date", "properties": {"Date": {"date": None}}}
         assert NotionService._parse_page(page) is None
 
     def test_parse_bad_page(self) -> None:
-        """Malformed page returns None, not exception."""
         assert NotionService._parse_page({"id": "bad"}) is None
 
 
-class TestNotionServiceGetEntries:
-    """Test the async get_entries method with mocked HTTP calls."""
+class TestAggregation:
+    def test_aggregate_daily(self, sample_tasks) -> None:
+        """Aggregating 3 tasks for same day into 1 DailyRecord."""
+        # Simulate body text in MARK entry
+        sample_tasks[0].body_text = (
+            "Woke up at 12:30. Sleep time 8:54. Recovery 81\n"
+            "MINUS TESTIK KATE\n"
+            "MARK: good"
+        )
 
-    @pytest.mark.asyncio
-    async def test_get_entries_from_cache(self, cache_service, sample_entries) -> None:
-        """When cache is fresh, should return from cache."""
-        cache_service.upsert_entries(sample_entries)
-        cache_service.mark_synced()
+        records = NotionService._aggregate_daily(sample_tasks)
+        assert len(records) == 1
 
-        with patch("src.services.notion_service.get_settings") as mock_settings:
-            mock_settings.return_value = MagicMock(
-                notion=MagicMock(token="test", database_id="test-db"),
-                app=MagicMock(cache_ttl_seconds=300),
-            )
-            service = NotionService(cache=cache_service)
-            entries = await service.get_entries()
-            assert len(entries) > 0
+        r = records[0]
+        assert r.entry_date == date(2026, 2, 15)
+        assert r.rating == DayRating.GOOD
+        assert r.testik == TestikStatus.MINUS_KATE
+        assert r.sleep.sleep_hours == pytest.approx(8.9, abs=0.01)
+        assert r.sleep.recovery == 81
+        assert r.total_hours == 4.5  # 1.5 + 3.0 (MARK has no hours)
+        assert r.tasks_count == 3
+        assert r.had_workout is True
+        assert r.had_coding is True
 
-    @pytest.mark.asyncio
-    async def test_get_entries_force_refresh(self, cache_service, mock_notion_response) -> None:
-        """force_refresh should bypass cache and query Notion."""
-        with patch("src.services.notion_service.get_settings") as mock_settings:
-            mock_settings.return_value = MagicMock(
-                notion=MagicMock(token="test", database_id="test-db"),
-                app=MagicMock(cache_ttl_seconds=300),
-            )
-            service = NotionService(cache=cache_service)
-            service._query_database = AsyncMock(return_value=mock_notion_response)
-
-            entries = await service.get_entries(force_refresh=True)
-            assert len(entries) == 2
-            assert entries[0].id == "page-001"
-            service._query_database.assert_called_once()
+    def test_aggregate_no_mark(self) -> None:
+        """Day without MARK entry should still aggregate tasks."""
+        from src.models.journal_entry import TaskEntry
+        tasks = [
+            TaskEntry(id="t1", title="CODING", entry_date=date(2026, 2, 20), tags=["CODING"], hours=4),
+            TaskEntry(id="t2", title="GYM", entry_date=date(2026, 2, 20), tags=["GYM"], hours=1),
+        ]
+        records = NotionService._aggregate_daily(tasks)
+        assert len(records) == 1
+        r = records[0]
+        assert r.rating is None
+        assert r.testik is None
+        assert r.total_hours == 5.0
+        assert r.had_workout is True
+        assert r.had_coding is True

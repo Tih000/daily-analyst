@@ -1,127 +1,100 @@
-"""Tests for Pydantic models and their computed properties."""
+"""Tests for Pydantic models and computed properties."""
 
 from datetime import date
 
 import pytest
 
 from src.models.journal_entry import (
-    BurnoutRisk,
+    DailyRecord,
+    DayRating,
     DaySummary,
-    JournalEntry,
-    MonthAnalysis,
-    Mood,
-    Testik,
+    SleepInfo,
+    TaskEntry,
+    TestikStatus,
 )
 
 
-class TestMoodEnum:
+class TestDayRating:
     def test_scores(self) -> None:
-        assert Mood.PERFECT.score == 5
-        assert Mood.GOOD.score == 4
-        assert Mood.NORMAL.score == 3
-        assert Mood.BAD.score == 2
-        assert Mood.VERY_BAD.score == 1
+        assert DayRating.PERFECT.score == 6
+        assert DayRating.VERY_GOOD.score == 5
+        assert DayRating.GOOD.score == 4
+        assert DayRating.NORMAL.score == 3
+        assert DayRating.BAD.score == 2
+        assert DayRating.VERY_BAD.score == 1
 
     def test_emojis(self) -> None:
-        assert Mood.PERFECT.emoji == "🤩"
-        assert Mood.VERY_BAD.emoji == "😫"
+        assert DayRating.PERFECT.emoji == "🤩"
+        assert DayRating.VERY_BAD.emoji == "😫"
 
 
-class TestTestikEnum:
+class TestTestikStatus:
     def test_scores(self) -> None:
-        assert Testik.PLUS.score == 1
-        assert Testik.MINUS_KATE.score == -1
-        assert Testik.MINUS_SOLO.score == -2
+        assert TestikStatus.PLUS.score == 1
+        assert TestikStatus.MINUS.score == -2
+        assert TestikStatus.MINUS_KATE.score == -1
+
+    def test_labels(self) -> None:
+        assert "PLUS" in TestikStatus.PLUS.label
+        assert "solo" in TestikStatus.MINUS.label
+        assert "Kate" in TestikStatus.MINUS_KATE.label
 
 
-class TestJournalEntry:
-    def test_basic_creation(self) -> None:
-        entry = JournalEntry(
-            id="test-1",
-            entry_date=date(2025, 1, 15),
-            mood=Mood.GOOD,
-            hours_worked=8,
-            tasks_completed=5,
-            sleep_hours=7.5,
-        )
-        assert entry.id == "test-1"
-        assert entry.mood == Mood.GOOD
-        assert entry.hours_worked == 8.0
+class TestTaskEntry:
+    def test_basic(self) -> None:
+        t = TaskEntry(id="t1", title="CODING", entry_date=date(2026, 2, 15), tags=["CODING"], hours=3.0)
+        assert t.title == "CODING"
+        assert t.hours == 3.0
 
-    def test_defaults(self) -> None:
-        entry = JournalEntry(id="test-2", entry_date=date(2025, 1, 1))
-        assert entry.hours_worked == 0
-        assert entry.tasks_completed == 0
-        assert entry.workout is False
-        assert entry.earnings_usd == 0
+    def test_none_hours(self) -> None:
+        t = TaskEntry(id="t2", title="MARK", entry_date=date(2026, 2, 15))
+        assert t.hours is None
 
-    def test_coerce_none_to_zero(self) -> None:
-        entry = JournalEntry(
-            id="test-3",
-            entry_date=date(2025, 1, 1),
-            hours_worked=None,  # type: ignore[arg-type]
-            tasks_completed=None,  # type: ignore[arg-type]
-            sleep_hours=None,  # type: ignore[arg-type]
-        )
-        assert entry.hours_worked == 0.0
-        assert entry.tasks_completed == 0
-        assert entry.sleep_hours == 0.0
+    def test_coerce_hours(self) -> None:
+        t = TaskEntry(id="t3", title="X", entry_date=date(2026, 2, 15), hours="2.5")  # type: ignore
+        assert t.hours == 2.5
 
+
+class TestDailyRecord:
     def test_productivity_score_high(self) -> None:
-        entry = JournalEntry(
-            id="high",
-            entry_date=date(2025, 1, 1),
-            mood=Mood.PERFECT,
-            hours_worked=10,
-            tasks_completed=8,
-            sleep_hours=8,
-            workout=True,
-            university=True,
-            earnings_usd=100,
+        r = DailyRecord(
+            entry_date=date(2026, 2, 15),
+            rating=DayRating.PERFECT,
+            sleep=SleepInfo(sleep_hours=8.0),
+            total_hours=10,
+            tasks_count=6,
+            had_workout=True,
+            had_university=True,
+            had_coding=True,
         )
-        score = entry.productivity_score
-        assert 85 <= score <= 100
+        assert r.productivity_score >= 80
 
     def test_productivity_score_low(self) -> None:
-        entry = JournalEntry(
-            id="low",
-            entry_date=date(2025, 1, 1),
-            mood=Mood.VERY_BAD,
-            hours_worked=0,
-            tasks_completed=0,
-            sleep_hours=3,  # < 4, so sleep_score = 0
+        r = DailyRecord(
+            entry_date=date(2026, 2, 15),
+            rating=DayRating.VERY_BAD,
+            sleep=SleepInfo(sleep_hours=3.0),
+            total_hours=0,
+            tasks_count=1,
         )
-        score = entry.productivity_score
-        assert score < 15
+        assert r.productivity_score < 25
 
-    def test_validation_bounds(self) -> None:
-        with pytest.raises(Exception):
-            JournalEntry(
-                id="bad",
-                entry_date=date(2025, 1, 1),
-                hours_worked=-1,
-            )
+    def test_defaults(self) -> None:
+        r = DailyRecord(entry_date=date(2026, 2, 15))
+        assert r.total_hours == 0
+        assert r.activities == []
+        assert r.had_workout is False
+        assert r.is_weekly_summary is False
 
 
-class TestBurnoutRisk:
-    def test_creation(self) -> None:
-        risk = BurnoutRisk(
-            risk_level="high",
-            risk_score=75,
-            factors=["Low sleep", "Bad mood"],
-            recommendation="Take a break.",
-        )
-        assert risk.risk_level == "high"
-        assert len(risk.factors) == 2
+class TestSleepInfo:
+    def test_defaults(self) -> None:
+        s = SleepInfo()
+        assert s.sleep_hours is None
+        assert s.woke_up_at is None
+        assert s.recovery is None
 
-
-class TestDaySummary:
-    def test_creation(self) -> None:
-        summary = DaySummary(
-            entry_date=date(2025, 1, 15),
-            productivity_score=82.5,
-            mood=Mood.GOOD,
-            hours_worked=8,
-            tasks_completed=6,
-        )
-        assert summary.productivity_score == 82.5
+    def test_with_values(self) -> None:
+        s = SleepInfo(woke_up_at="12:30", sleep_duration="8:54", sleep_hours=8.9, recovery=81)
+        assert s.sleep_hours == 8.9
+        assert s.recovery == 81

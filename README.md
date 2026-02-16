@@ -168,22 +168,24 @@ ID базы данных Notion, откуда бот будет читать з�
 NOTION_DATABASE_ID=a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4
 ```
 
-#### Структура базы данных Notion
+#### Структура базы данных Notion (Tasks)
 
-Создай базу данных с **точно** такими именами полей:
+Бот работает с базой данных **Tasks** со следующими полями:
 
-| Поле | Тип | Значения |
+| Поле | Тип | Описание |
 |---|---|---|
-| **Date** | Date | — |
-| **Mood** | Select | `PERFECT`, `GOOD`, `NORMAL`, `BAD`, `VERY_BAD` |
-| **Hours Worked** | Number | — |
-| **Tasks Completed** | Number | — |
-| **TESTIK** | Select | `PLUS`, `MINUS_KATE`, `MINUS_SOLO` |
-| **Workout** | Checkbox | — |
-| **University** | Checkbox | — |
-| **Earnings USD** | Number | — |
-| **Sleep Hours** | Number | — |
-| **Notes** | Rich Text | — |
+| **Title** | Title | Название задачи/категории (`MARK`, `CODING`, `GYM`, ...) |
+| **Date** | Date | Дата |
+| **Tags** | Multi-select | Категории (динамические: `MARK`, `CODING`, `GYM`, `AI`, `UNIVERSITY`, `KATE`, ...) |
+| **Checkbox** | Checkbox | Выполнено или нет |
+| **It took (hours)** | Number | Сколько часов заняло |
+
+**Запись MARK** — это дневниковая запись дня. В теле страницы пиши:
+- Сон: `Woke up at 12:30. Sleep time 8:54. Recovery 81 by Apple Watch`
+- TESTIK: `PLUS TESTIK` / `MINUS TESTIK` / `MINUS TESTIK KATE`
+- Оценка дня: `MARK: perfect` / `very good` / `good` / `normal` / `bad` / `very bad`
+
+**MARK's WEAK** — недельный обзор (автоматически фильтруется из ежедневной аналитики).
 
 ---
 
@@ -466,26 +468,29 @@ src/
 ├── main.py              # FastAPI + Telegram handlers (11 команд)
 ├── config.py            # Env variables (dataclass-based)
 ├── services/
-│   ├── notion_service.py  # Notion API + retry + pagination
+│   ├── notion_service.py  # Notion DB + Blocks API, парсинг MARK entries
 │   ├── ai_analyzer.py     # GPT analysis + local stats
-│   └── charts_service.py  # Matplotlib charts (5 типов)
+│   └── charts_service.py  # Matplotlib charts (6 типов)
 ├── models/
-│   └── journal_entry.py   # Pydantic models + enums
+│   └── journal_entry.py   # TaskEntry, DailyRecord, enums
 └── utils/
-    ├── cache.py           # SQLite cache (30-day window)
-    └── validators.py      # Input parsing + formatting
+    ├── cache.py           # SQLite: task_entries + daily_records
+    └── validators.py      # Парсинг sleep/testik/rating из текста
 ```
 
+**Поток данных:**
+
 ```
-Telegram → /webhook → nginx (SSL) → FastAPI → CommandHandler → NotionService → Cache
-                                                                            ↓
-                                                                AIAnalyzer ← entries
-                                                                     ↓
-                                                             GPT-4o-mini → insights
-                                                                     ↓
-                                                            ChartsService → PNG
-                                                                     ↓
-                                                             Telegram ← reply + photo
+Notion Tasks DB
+  ↓ (query database API + fetch page blocks for MARK entries)
+TaskEntry[] (raw pages)
+  ↓ (group by date, parse MARK body text)
+DailyRecord[] (aggregated: rating, testik, sleep, activities)
+  ↓ (cache in SQLite)
+  ↓
+Telegram command → AIAnalyzer → GPT-4o-mini → insights
+                 → ChartsService → PNG charts
+                 → reply + photos → Telegram
 ```
 
 ---
