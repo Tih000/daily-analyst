@@ -78,6 +78,7 @@ def authorized(func):
         if not update.effective_user or not update.message:
             return
         uid = update.effective_user.id
+        logger.info("→ %s from user %s", func.__name__, uid)
         s = get_settings()
         if not validate_user_id(uid, s.telegram.allowed_user_ids):
             await update.message.reply_text("🚫 Нет доступа.")
@@ -87,9 +88,13 @@ def authorized(func):
             return
         try:
             await func(update, context)
+            logger.info("✓ %s completed for user %s", func.__name__, uid)
         except Exception as e:
-            logger.error("Error user %s: %s", uid, e, exc_info=True)
-            await update.message.reply_text(f"⚠️ Ошибка: {e}")
+            logger.error("Error in %s for user %s: %s", func.__name__, uid, e, exc_info=True)
+            try:
+                await update.message.reply_text(f"⚠️ Ошибка: {e}")
+            except Exception as send_err:
+                logger.error("Failed to send error to user %s: %s", uid, send_err)
     return wrapper
 
 
@@ -99,17 +104,24 @@ async def _safe_reply(message, text: str, **kwargs) -> None:
     """Send with Markdown, fallback to plain text if Telegram can't parse it."""
     try:
         await message.reply_text(text, parse_mode="Markdown", **kwargs)
-    except Exception:
-        # Strip Markdown and resend as plain text
-        await message.reply_text(text, **kwargs)
+    except Exception as md_err:
+        logger.debug("Markdown failed (%s), retrying plain text", md_err)
+        try:
+            await message.reply_text(text, **kwargs)
+        except Exception as plain_err:
+            logger.error("Failed to send reply: %s", plain_err)
 
 
 async def _safe_send(chat_id: int, text: str, **kwargs) -> None:
     """Send via bot with Markdown, fallback to plain text."""
     try:
         await bot_app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", **kwargs)
-    except Exception:
-        await bot_app.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+    except Exception as md_err:
+        logger.debug("Markdown send failed (%s), retrying plain text", md_err)
+        try:
+            await bot_app.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+        except Exception as plain_err:
+            logger.error("Failed to send message to %s: %s", chat_id, plain_err)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -822,8 +834,32 @@ app = FastAPI(title="Jarvis — Daily Analyst", version="3.0.0", lifespan=lifesp
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "ts": datetime.now(timezone.utc).isoformat()}
+async def health() -> dict[str, object]:
+    try:
+        me = await bot_app.bot.get_me()
+        bot_info = {"id": me.id, "username": me.username, "ok": True}
+    except Exception as e:
+        bot_info = {"ok": False, "error": str(e)}
+
+    try:
+        wh = await bot_app.bot.get_webhook_info()
+        wh_info = {
+            "url": wh.url,
+            "pending_updates": wh.pending_update_count,
+            "last_error": wh.last_error_message or "",
+            "last_error_date": str(wh.last_error_date or ""),
+        }
+    except Exception as e:
+        wh_info = {"error": str(e)}
+
+    cache_fresh = cache_service.is_cache_fresh()
+    return {
+        "status": "ok",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "bot": bot_info,
+        "webhook": wh_info,
+        "cache_fresh": cache_fresh,
+    }
 
 
 @app.post("/webhook")
@@ -838,10 +874,11 @@ async def telegram_webhook(request: Request) -> Response:
 
     try:
         data = await request.json()
+        logger.info("Webhook received update: %s", str(data)[:200])
         update = Update.de_json(data, bot_app.bot)
         await bot_app.process_update(update)
     except Exception as e:
-        logger.error("Webhook: %s", e, exc_info=True)
+        logger.error("Webhook processing error: %s", e, exc_info=True)
     return Response(status_code=status.HTTP_200_OK)
 
 
