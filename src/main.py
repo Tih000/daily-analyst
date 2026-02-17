@@ -152,7 +152,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/formula — формула идеального дня\n"
         "/whatif `<сценарий>` — симулятор\n"
         "/anomalies — аномалии\n"
-        "/milestones — вехи жизни\n\n"
+        "/milestones — вехи жизни\n"
+        "/review — итоги дня (разбор наставника)\n\n"
         "🏆 *Геймификация:*\n"
         "/streaks — серии\n"
         "/habits `<name>` — тепловая карта\n"
@@ -574,6 +575,18 @@ async def cmd_milestones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _safe_reply(update.message, truncate_text(text))
 
 
+# ── /review — Manual evening review ────────────────────────────────────────
+
+@authorized
+async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    await update.message.reply_text("🌙 Считаю итоги дня...")
+    records = await notion_service.get_recent(14)
+    review = await ai_analyzer.evening_review(records)
+    await _safe_reply(update.message, truncate_text(review))
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # FREE CHAT — handle any text message
 # ═══════════════════════════════════════════════════════════════════════════
@@ -619,7 +632,7 @@ _commands = [
     ("set_goal", cmd_set_goal), ("goals", cmd_goals),
     ("dashboard", cmd_dashboard), ("formula", cmd_formula),
     ("whatif", cmd_whatif), ("anomalies", cmd_anomalies),
-    ("milestones", cmd_milestones),
+    ("milestones", cmd_milestones), ("review", cmd_review),
 ]
 for name, handler in _commands:
     bot_app.add_handler(CommandHandler(name, handler))
