@@ -587,6 +587,25 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await _safe_reply(update.message, truncate_text(review))
 
 
+# ── /save_db — Download the SQLite database file ─────────────────────────
+
+@authorized
+async def cmd_save_db(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message:
+        return
+    from src.utils.cache import DB_PATH
+
+    if not DB_PATH.exists():
+        await update.message.reply_text("❌ База данных не найдена.")
+        return
+    size_mb = DB_PATH.stat().st_size / (1024 * 1024)
+    await update.message.reply_document(
+        document=open(DB_PATH, "rb"),  # noqa: SIM115
+        filename=f"cache_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M')}.db",
+        caption=f"📦 SQLite backup — {size_mb:.2f} MB",
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # FREE CHAT — handle any text message
 # ═══════════════════════════════════════════════════════════════════════════
@@ -633,6 +652,7 @@ _commands = [
     ("dashboard", cmd_dashboard), ("formula", cmd_formula),
     ("whatif", cmd_whatif), ("anomalies", cmd_anomalies),
     ("milestones", cmd_milestones), ("review", cmd_review),
+    ("save_db", cmd_save_db),
 ]
 for name, handler in _commands:
     bot_app.add_handler(CommandHandler(name, handler))
