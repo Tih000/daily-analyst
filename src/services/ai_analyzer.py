@@ -101,27 +101,76 @@ class AIAnalyzer:
 
     @staticmethod
     def _records_to_summary(records: list[DailyRecord]) -> str:
-        """Convert records to text for GPT. Includes journal_text (~200 chars/day) as full picture."""
+        """Convert records to text for GPT. Detailed for last year, condensed for older."""
         if not records:
             return "Нет данных."
 
+        sorted_recs = sorted(records, key=lambda x: x.entry_date)
+        daily_recs = [r for r in sorted_recs if not r.is_weekly_summary]
+
+        if not daily_recs:
+            return "Нет данных."
+
+        one_year_ago = date.today() - timedelta(days=365)
+        recent = [r for r in daily_recs if r.entry_date >= one_year_ago]
+        older = [r for r in daily_recs if r.entry_date < one_year_ago]
+
         lines: list[str] = []
-        for r in sorted(records, key=lambda x: x.entry_date):
-            if r.is_weekly_summary:
-                continue
-            rating_str = r.rating.value if r.rating else "N/A"
-            testik_str = r.testik.value if r.testik else "N/A"
-            sleep_str = f"{r.sleep.sleep_hours}h" if r.sleep.sleep_hours else "N/A"
-            activities_str = ", ".join(r.activities[:8]) if r.activities else "none"
-            journal_snippet = (r.journal_text.strip()[:JOURNAL_TRUNCATE] + ("…" if len(r.journal_text) > JOURNAL_TRUNCATE else "")) if r.journal_text else ""
-            line = (
-                f"{r.entry_date}: rating={rating_str}, hours={r.total_hours}, "
-                f"sleep={sleep_str}, testik={testik_str}, tasks={r.tasks_count}, "
-                f"activities=[{activities_str}], score={r.productivity_score}"
-            )
-            if journal_snippet:
-                line += f"\n  journal: {journal_snippet}"
-            lines.append(line)
+
+        # Older records: monthly summaries only
+        if older:
+            lines.append(f"=== АРХИВ ({older[0].entry_date} — {older[-1].entry_date}) ===")
+            by_month: dict[str, list[DailyRecord]] = {}
+            for r in older:
+                key = r.entry_date.strftime("%Y-%m")
+                by_month.setdefault(key, []).append(r)
+
+            for month_key in sorted(by_month):
+                recs = by_month[month_key]
+                ratings = [r.rating.value for r in recs if r.rating]
+                avg_score = sum(r.productivity_score for r in recs) / len(recs) if recs else 0
+                sleep_vals = [r.sleep.sleep_hours for r in recs if r.sleep.sleep_hours]
+                avg_sleep = sum(sleep_vals) / len(sleep_vals) if sleep_vals else 0
+                gym_days = sum(1 for r in recs if r.had_workout)
+                coding_days = sum(1 for r in recs if r.had_coding)
+                kate_days = sum(1 for r in recs if r.had_kate)
+                testik_plus = sum(1 for r in recs if r.testik == TestikStatus.PLUS)
+                top_rating = max(set(ratings), key=ratings.count) if ratings else "N/A"
+                all_acts: list[str] = []
+                for r in recs:
+                    all_acts.extend(r.activities)
+                top_acts = ", ".join(a for a, _ in Counter(all_acts).most_common(5))
+
+                lines.append(
+                    f"{month_key}: {len(recs)}d, avg_score={avg_score:.1f}, "
+                    f"sleep={avg_sleep:.1f}h, gym={gym_days}d, coding={coding_days}d, "
+                    f"kate={kate_days}d, testik+={testik_plus}d, "
+                    f"top_rating={top_rating}, top_activities=[{top_acts}]"
+                )
+            lines.append("")
+
+        # Recent records: full daily detail
+        if recent:
+            lines.append(f"=== ПОДРОБНО ({recent[0].entry_date} — {recent[-1].entry_date}) ===")
+            for r in recent:
+                rating_str = r.rating.value if r.rating else "N/A"
+                testik_str = r.testik.value if r.testik else "N/A"
+                sleep_str = f"{r.sleep.sleep_hours}h" if r.sleep.sleep_hours else "N/A"
+                activities_str = ", ".join(r.activities[:8]) if r.activities else "none"
+                journal_snippet = ""
+                if r.journal_text:
+                    journal_snippet = r.journal_text.strip()[:JOURNAL_TRUNCATE]
+                    if len(r.journal_text) > JOURNAL_TRUNCATE:
+                        journal_snippet += "…"
+                line = (
+                    f"{r.entry_date}: rating={rating_str}, hours={r.total_hours}, "
+                    f"sleep={sleep_str}, testik={testik_str}, tasks={r.tasks_count}, "
+                    f"activities=[{activities_str}], score={r.productivity_score}"
+                )
+                if journal_snippet:
+                    line += f"\n  journal: {journal_snippet}"
+                lines.append(line)
+
         return "\n".join(lines)
 
     # ── Monthly analysis ────────────────────────────────────────────────────
@@ -339,7 +388,7 @@ class AIAnalyzer:
                     f"День ПОСЛЕ MINUS_KATE: avg_score={statistics.mean(avg_next):.1f}"
                 )
 
-        summary = self._records_to_summary(records[-30:] if len(records) >= 30 else records)
+        summary = self._records_to_summary(records)
         return await self._ask_gpt(
             f"Статистика отношений:\n" + "\n".join(stats_parts) + "\n\n"
             f"Данные (последние 30 дней):\n{summary}\n\n"
@@ -376,7 +425,7 @@ class AIAnalyzer:
                 f"rating={avg_rating:.1f}/6, sleep={avg_sleep:.1f}h"
             )
 
-        summary = self._records_to_summary(days[-30:] if len(days) >= 30 else days)
+        summary = self._records_to_summary(days)
         return await self._ask_gpt(
             f"TESTIK статистика:\n" + "\n".join(stats_lines) + "\n\n"
             f"Данные (читай journal для контекста):\n{summary}\n\n"
@@ -395,7 +444,7 @@ class AIAnalyzer:
         best_days = sorted(days, key=lambda r: r.productivity_score, reverse=True)[:5]
         optimal = statistics.mean([r.sleep.sleep_hours for r in best_days])
 
-        summary = self._records_to_summary(records[-30:] if len(records) >= 30 else records)
+        summary = self._records_to_summary(records)
         return await self._ask_gpt(
             f"Данные сна: avg={avg_sleep:.1f}ч, optimal (top-5 days)={optimal:.1f}ч\n"
             f"Дневник:\n{summary}\n\n"
@@ -412,7 +461,7 @@ class AIAnalyzer:
         coding_days = sum(1 for r in days if r.had_coding)
         total_coding_hours = sum(r.total_hours for r in days if r.had_coding)
 
-        summary = self._records_to_summary(days[-30:] if len(days) >= 30 else days)
+        summary = self._records_to_summary(days)
         return await self._ask_gpt(
             f"Статистика кодинга: {coding_days}/{len(days)} дней, "
             f"~{total_coding_hours:.0f}ч всего\n"
@@ -425,9 +474,7 @@ class AIAnalyzer:
     async def weak_spots(self, records: list[DailyRecord]) -> str:
         if not records:
             return "📭 Нет данных для анализа."
-        summary = self._records_to_summary(
-            records[-30:] if len(records) >= 30 else records
-        )
+        summary = self._records_to_summary(records)
         return await self._ask_gpt(
             f"Данные за последний период (читай journal для контекста):\n{summary}\n\n"
             "Найди ТОП-5 слабых мест в продуктивности. Для каждого дай:\n"
@@ -672,7 +719,7 @@ class AIAnalyzer:
                 avg_combo = round(statistics.mean(scores), 2)
                 combo_insights.append(f"{a}+{b}: avg_rating={avg_combo} (n={len(scores)})")
 
-        summary = self._records_to_summary(days[-30:] if len(days) >= 30 else days)
+        summary = self._records_to_summary(days)
         ai_insights = await self._ask_gpt(
             f"Базовый средний рейтинг: {baseline}. Корреляции активностей с рейтингом:\n"
             + "\n".join(f"{c.activity}: {c.avg_rating} (vs baseline {c.vs_baseline:+.2f}), n={c.count}" for c in correlations[:10])
@@ -1006,9 +1053,9 @@ class AIAnalyzer:
         """What-if simulator: model scenario impact based on historical data."""
         if not records:
             return "📭 Нет данных."
-        summary = self._records_to_summary(records[-30:] if len(records) > 30 else records)
+        summary = self._records_to_summary(records)
         return await self._ask_gpt(
-            f"Данные за последний месяц:\n{summary}\n\n"
+            f"Данные дневника:\n{summary}\n\n"
             f"Пользователь спрашивает: /whatif {scenario}\n\n"
             "Смоделируй этот сценарий на основе РЕАЛЬНЫХ исторических данных Тихона.\n"
             "Формат:\n"
@@ -1060,7 +1107,7 @@ class AIAnalyzer:
             for a in anomalies[:5]
         )
 
-        summary = self._records_to_summary(records[-30:] if len(records) > 30 else records)
+        summary = self._records_to_summary(records)
         return await self._ask_gpt(
             f"Аномальные дни:\n{anomaly_text}\n\nДанные (journal):\n{summary}\n\n"
             "Для каждой аномалии объясни ПОЧЕМУ на основе journal_text и паттернов. "
@@ -1080,16 +1127,16 @@ class AIAnalyzer:
         chat_history: list[ChatMessage],
     ) -> str:
         """Handle free-form text message with full context."""
-        summary = self._records_to_summary(records[-14:] if len(records) > 14 else records)
+        summary = self._records_to_summary(records)
 
         history_msgs: list[dict[str, str]] = [
             {"role": "system", "content": _chat_system_prompt()},
         ]
 
-        # Add data context
+        # Add data context — full history (archived months + detailed last year)
         history_msgs.append({
             "role": "system",
-            "content": f"Данные дневника (последние 14 дней):\n{summary}",
+            "content": f"Полные данные дневника Тихона ({len(records)} дней):\n{summary}",
         })
 
         # Add conversation history (last 10 messages for context)
