@@ -30,6 +30,9 @@ server {
     ssl_session_cache   shared:SSL:10m;
     ssl_session_timeout 10m;
 
+    # Docker DNS resolver — resolve service names at request time, not startup
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
     # Security headers
     add_header X-Frame-Options DENY always;
     add_header X-Content-Type-Options nosniff always;
@@ -40,7 +43,8 @@ server {
     location /webhook {
         limit_req zone=webhook burst=10 nodelay;
 
-        proxy_pass         http://bot:8000;
+        set $backend http://bot:8000;
+        proxy_pass         $backend;
         proxy_set_header   Host $host;
         proxy_set_header   X-Real-IP $remote_addr;
         proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -50,12 +54,14 @@ server {
 
     # Health check
     location /health {
-        proxy_pass http://bot:8000;
+        set $backend http://bot:8000;
+        proxy_pass $backend;
     }
 
     # Sync endpoint
     location /sync {
-        proxy_pass http://bot:8000;
+        set $backend http://bot:8000;
+        proxy_pass $backend;
     }
 
     # Everything else — 404
