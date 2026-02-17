@@ -623,7 +623,7 @@ _last_digest_date: str = ""
 
 
 async def _background_loop() -> None:
-    """Runs every 30 minutes: morning briefing (9:00), alerts (6h), weekly digest (Sun 18:00)."""
+    """Runs every 30 minutes: auto-sync Notion, morning briefing, alerts, weekly digest."""
     global _last_briefing_date, _last_alert_key, _last_digest_date
     await asyncio.sleep(30)
 
@@ -632,6 +632,13 @@ async def _background_loop() -> None:
             now = datetime.now(timezone.utc)
             today_str = now.strftime("%Y-%m-%d")
             uids = list(settings.telegram.allowed_user_ids)
+
+            # Auto-sync: refresh data from Notion every cycle (30 min)
+            try:
+                count = await notion_service.sync_all()
+                logger.info("Auto-sync complete: %d records", count)
+            except Exception as e:
+                logger.warning("Auto-sync error: %s", e)
 
             # Morning briefing: ~9:00 UTC (adjust for timezone)
             if 8 <= now.hour <= 10 and _last_briefing_date != today_str:
@@ -737,8 +744,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _polling_task = asyncio.create_task(_run_polling())
         logger.info("Polling mode active — bot will pull updates from Telegram")
 
+    # Initial data sync — load full history from Notion on startup
+    try:
+        count = await notion_service.sync_all()
+        logger.info("Startup sync complete: %d records loaded from Notion", count)
+    except Exception as e:
+        logger.warning("Startup sync failed (will retry in background): %s", e)
+
     bg_task = asyncio.create_task(_background_loop())
-    logger.info("Jarvis v3 started — 24 commands + free-chat + proactive AI")
+    logger.info("Jarvis v3 started — 24 commands + free-chat + proactive AI + auto-sync")
     yield
 
     bg_task.cancel()
