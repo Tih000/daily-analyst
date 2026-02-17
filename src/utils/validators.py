@@ -77,18 +77,44 @@ def parse_day_rating(text: str) -> Optional[DayRating]:
     """
     Extract daily rating from MARK entry body.
 
-    Looks for "MARK: good" / "MARK: very bad" etc. at the end of the text.
+    Supports multiple formats:
+        "MARK: good", "Day: very bad", "Rating: perfect",
+        or standalone rating word on its own line.
     """
-    # Match "MARK: <rating>" (case-insensitive)
-    match = re.search(r"MARK\s*:\s*(very\s+good|very\s+bad|perfect|good|normal|bad)", text, re.IGNORECASE)
+    _RATING_PATTERN = r"(very\s+good|very\s+bad|perfect|good|normal|bad)"
+
+    # Format 1: "MARK: <rating>" or "Day: <rating>" or "Rating: <rating>"
+    match = re.search(
+        r"(?:MARK|Day|Rating|Оценка)\s*[:=]\s*" + _RATING_PATTERN,
+        text, re.IGNORECASE,
+    )
     if match:
-        raw = match.group(1).strip().lower()
-        # Normalize whitespace
-        raw = re.sub(r"\s+", " ", raw)
+        raw = re.sub(r"\s+", " ", match.group(1).strip().lower())
         try:
             return DayRating(raw)
         except ValueError:
             pass
+
+    # Format 2: Rating word on its own line (common in short MARK entries)
+    for line in text.split("\n"):
+        line_stripped = line.strip().lower()
+        line_stripped = re.sub(r"\s+", " ", line_stripped)
+        if line_stripped in ("perfect", "very good", "very bad", "good", "normal", "bad"):
+            try:
+                return DayRating(line_stripped)
+            except ValueError:
+                pass
+
+    # Format 3: Rating anywhere in the last 200 chars (fallback)
+    tail = text[-200:] if len(text) > 200 else text
+    match = re.search(_RATING_PATTERN, tail, re.IGNORECASE)
+    if match:
+        raw = re.sub(r"\s+", " ", match.group(1).strip().lower())
+        try:
+            return DayRating(raw)
+        except ValueError:
+            pass
+
     return None
 
 

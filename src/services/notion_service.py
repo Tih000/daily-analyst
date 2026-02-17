@@ -249,13 +249,14 @@ class NotionService:
             mark_task: Optional[TaskEntry] = None
             is_weekly = False
 
-            all_tags: list[str] = []
+            all_activities: list[str] = []
             total_hours = 0.0
             completed = 0
             flags = {"workout": False, "university": False, "coding": False, "kate": False}
 
             for t in day_tasks:
                 title_upper = t.title.upper().strip()
+                title_clean = t.title.strip()
 
                 # Detect MARK entry
                 if title_upper == "MARK":
@@ -264,11 +265,17 @@ class NotionService:
                     is_weekly = True
                     mark_task = t
 
-                # Collect tags
+                # Add page title as activity (the real activity name: CODING, GYM, etc.)
+                if title_clean and title_upper not in ("MARK", "MARK'S WEAK", "MARK'S WEEK"):
+                    if title_clean not in all_activities:
+                        all_activities.append(title_clean)
+
+                # Collect tags as additional context
                 for tag in t.tags:
-                    tag_upper = tag.upper().strip()
-                    if tag_upper not in all_tags:
-                        all_tags.append(tag)
+                    tag_clean = tag.strip()
+                    tag_upper = tag_clean.upper()
+                    if tag_clean not in all_activities:
+                        all_activities.append(tag_clean)
                     if tag_upper in _WORKOUT_TAGS:
                         flags["workout"] = True
                     if tag_upper in _UNI_TAGS:
@@ -305,13 +312,20 @@ class NotionService:
                 sleep = parse_sleep_info(body)
                 testik = parse_testik(body)
                 rating = parse_day_rating(body)
+                if not rating:
+                    logger.debug(
+                        "MARK %s: no rating parsed from body (first 300 chars): %s",
+                        day, body[:300],
+                    )
+            elif mark_task:
+                logger.debug("MARK %s: body_text is empty (block fetch may have failed)", day)
 
             records.append(DailyRecord(
                 entry_date=day,
                 rating=rating,
                 testik=testik,
                 sleep=sleep,
-                activities=all_tags,
+                activities=all_activities,
                 total_hours=round(total_hours, 1),
                 tasks_count=len(day_tasks),
                 tasks_completed=completed,
