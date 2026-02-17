@@ -179,7 +179,6 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     text += (
         f"📋 Задач: {analysis.total_tasks}\n"
         f"🏋️ GYM: {format_percentage(analysis.workout_rate)}\n"
-        f"💻 Код: {format_percentage(analysis.coding_rate)}\n"
     )
     if analysis.activity_breakdown:
         text += "\n📈 *Топ активностей:*\n"

@@ -56,15 +56,19 @@ def _system_prompt() -> str:
 - Ты хвалишь ТОЛЬКО за реальные достижения: рекорды, длинные серии, стабильный рост. Не за базу.
 
 СТРУКТУРА ДАННЫХ:
-- Активности: CODING, GYM, AI, UNIVERSITY, KATE, CRYPTO, FOOTBALL, TENNIS, PADEL и др.
+- Активности — любая продуктивная работа: CODING, STUDY, AI, UNIVERSITY, CRYPTO, работа над проектами и т.д.
+  Также: GYM/SPORT, KATE, FOOTBALL, TENNIS, PADEL и др.
+- ВАЖНО: продуктивность — это НЕ только кодинг. Тихон работает над разными вещами (учёба, крипто, AI, проекты). Главное — что он РАБОТАЛ, а не чем конкретно.
 - TESTIK: PLUS = воздержание ✅, MINUS = мастурбация 🔴, MINUS_KATE = секс с девушкой 🟡
 - Оценка дня (MARK): perfect, very good, good, normal, bad, very bad
 - Сон: длительность, время подъёма
 - journal_text — дневниковая запись с мыслями, контекстом, самочувствием
+- Изучай ПОЛНУЮ историю, чтобы понимать над чем Тихон работал в разные периоды, как менялась продуктивность, какие активности дают лучший результат
 
 ПРАВИЛА:
 - Всегда опирайся на КОНКРЕТНЫЕ данные: даты, цифры, серии
-- Сравнивай с лучшими периодами: "В январе ты делал X — почему сейчас нет?"
+- Сравнивай с лучшими периодами: "В январе ты работал над X по 4ч/день — почему сейчас 0?"
+- Анализируй какие ВИДЫ работы дают лучшие оценки дня (не только кодинг!)
 - Называй вещи своими именами: проёб — это проёб, лень — это лень
 - Давай КОНКРЕТНЫЙ план: не "больше спи", а "ложись до 00:00, минимум 7ч, как 15-20 января когда avg rating был 5.2"
 - Отвечай на русском, кратко, агрессивно, по делу
@@ -153,7 +157,11 @@ class AIAnalyzer:
                 sleep_vals = [r.sleep.sleep_hours for r in recs if r.sleep.sleep_hours]
                 avg_sleep = sum(sleep_vals) / len(sleep_vals) if sleep_vals else 0
                 gym_days = sum(1 for r in recs if r.had_workout)
-                coding_days = sum(1 for r in recs if r.had_coding)
+                productive_days = sum(
+                    1 for r in recs
+                    if len([a for a in r.activities if a.upper() not in ("MARK", "MARK'S WEAK", "MARK'S WEEK")]) >= 2
+                    or r.total_hours >= 1
+                )
                 kate_days = sum(1 for r in recs if r.had_kate)
                 testik_plus = sum(1 for r in recs if r.testik == TestikStatus.PLUS)
                 top_rating = max(set(ratings), key=ratings.count) if ratings else "N/A"
@@ -164,7 +172,7 @@ class AIAnalyzer:
 
                 lines.append(
                     f"{month_key}: {len(recs)}d, avg_score={avg_score:.1f}, "
-                    f"sleep={avg_sleep:.1f}h, gym={gym_days}d, coding={coding_days}d, "
+                    f"sleep={avg_sleep:.1f}h, gym={gym_days}d, productive={productive_days}d, "
                     f"kate={kate_days}d, testik+={testik_plus}d, "
                     f"top_rating={top_rating}, top_activities=[{top_acts}]"
                 )
@@ -477,17 +485,21 @@ class AIAnalyzer:
             return "📭 Нет данных для прогноза."
 
         days = [r for r in records if not r.is_weekly_summary]
-        coding_days = sum(1 for r in days if r.had_coding)
-        total_coding_hours = sum(r.total_hours for r in days if r.had_coding)
+        productive_days = sum(
+            1 for r in days
+            if len([a for a in r.activities if a.upper() not in ("MARK", "MARK'S WEAK", "MARK'S WEEK")]) >= 2
+            or r.total_hours >= 1
+        )
+        total_work_hours = sum(r.total_hours for r in days if r.total_hours > 0)
 
         summary = self._records_to_summary(days)
         return await self._ask_gpt(
-            f"Статистика кодинга: {coding_days}/{len(days)} дней, "
-            f"~{total_coding_hours:.0f}ч всего\n"
+            f"Статистика работы: {productive_days}/{len(days)} продуктивных дней, "
+            f"~{total_work_hours:.0f}ч всего\n"
             f"Данные:\n{summary}\n\n"
-            "Дай: 1) Анализ рабочих паттернов "
-            "2) Связь кодинга с продуктивностью и настроением "
-            "3) Как увеличить эффективность рабочего времени"
+            "Дай: 1) Анализ рабочих паттернов (над чем Тихон работает, какие активности продуктивнее) "
+            "2) Связь работы с оценкой дня и настроением "
+            "3) Как увеличить эффективность и продуктивность"
         )
 
     async def weak_spots(self, records: list[DailyRecord]) -> str:
@@ -582,15 +594,19 @@ class AIAnalyzer:
             )
         )
 
-        # CODING
-        coding_dates = {r.entry_date for r in days if r.had_coding}
+        # Productive work (any day with 2+ activities or 1+ hours)
+        work_dates = {
+            r.entry_date for r in days
+            if len([a for a in r.activities if a.upper() not in ("MARK", "MARK'S WEAK", "MARK'S WEEK")]) >= 2
+            or r.total_hours >= 1
+        }
         result.append(
             StreakInfo(
-                name="CODING",
-                emoji="💻",
-                current=current_streak(coding_dates),
-                record=record_streak(coding_dates),
-                last_date=latest if latest in coding_dates else None,
+                name="WORK",
+                emoji="📋",
+                current=current_streak(work_dates),
+                record=record_streak(work_dates),
+                last_date=latest if latest in work_dates else None,
             )
         )
 
@@ -650,8 +666,12 @@ class AIAnalyzer:
         def workout_rate(ds: list[DailyRecord]) -> float:
             return round(sum(1 for r in ds if r.had_workout) / len(ds), 2) if ds else 0.0
 
-        def coding_rate(ds: list[DailyRecord]) -> float:
-            return round(sum(1 for r in ds if r.had_coding) / len(ds), 2) if ds else 0.0
+        def productive_rate(ds: list[DailyRecord]) -> float:
+            return round(sum(
+                1 for r in ds
+                if len([a for a in r.activities if a.upper() not in ("MARK", "MARK'S WEAK", "MARK'S WEEK")]) >= 2
+                or r.total_hours >= 1
+            ) / len(ds), 2) if ds else 0.0
 
         def testik_plus_rate(ds: list[DailyRecord]) -> float:
             return round(sum(1 for r in ds if r.testik == TestikStatus.PLUS) / len(ds), 2) if ds else 0.0
@@ -663,7 +683,7 @@ class AIAnalyzer:
             MetricDelta(name="Часы работы", emoji="⏰", value_a=avg_hours(days_a), value_b=avg_hours(days_b)),
             MetricDelta(name="Сон (ч)", emoji="😴", value_a=avg_sleep(days_a), value_b=avg_sleep(days_b)),
             MetricDelta(name="Доля тренировок", emoji="🏋️", value_a=workout_rate(days_a), value_b=workout_rate(days_b)),
-            MetricDelta(name="Доля кодинга", emoji="💻", value_a=coding_rate(days_a), value_b=coding_rate(days_b)),
+            MetricDelta(name="Продуктивных дней", emoji="📋", value_a=productive_rate(days_a), value_b=productive_rate(days_b)),
             MetricDelta(name="TESTIK PLUS %", emoji="✅", value_a=testik_plus_rate(days_a), value_b=testik_plus_rate(days_b)),
         ]
 
@@ -762,8 +782,8 @@ class AIAnalyzer:
         summary = self._records_to_summary(records)
         return await self._ask_gpt(
             f"Данные дневника (читай journal_text для контекста):\n{summary}\n\n"
-            "Классифицируй дни на типы по активностям и контексту (например: «день кодинга», «день с Kate», «ленивый день», «универ» и т.д.). "
-            "Дай статистику: сколько дней каждого типа, средние метрики по типам. Кратко, с эмодзи."
+            "Классифицируй дни на типы по активностям и контексту (например: «продуктивный день», «день учёбы», «день с Kate», «ленивый день», «спорт + работа» и т.д.). "
+            "Дай статистику: сколько дней каждого типа, средние метрики по типам. Какой тип дня самый продуктивный? Кратко, с эмодзи."
         )
 
     # ── Weekly digest ────────────────────────────────────────────────────────
@@ -785,7 +805,11 @@ class AIAnalyzer:
         tw_ratings = [r.rating.score for r in this_week if r.rating]
         tw_avg = statistics.mean(tw_ratings) if tw_ratings else 0
         tw_gym = sum(1 for r in this_week if r.had_workout)
-        tw_coding = sum(1 for r in this_week if r.had_coding)
+        tw_productive = sum(
+            1 for r in this_week
+            if len([a for a in r.activities if a.upper() not in ("MARK", "MARK'S WEAK", "MARK'S WEEK")]) >= 2
+            or r.total_hours >= 1
+        )
         tw_plus = sum(1 for r in this_week if r.testik == TestikStatus.PLUS)
         tw_sleep = [r.sleep.sleep_hours for r in this_week if r.sleep.sleep_hours]
         tw_avg_sleep = statistics.mean(tw_sleep) if tw_sleep else 0
@@ -815,7 +839,7 @@ class AIAnalyzer:
 
         ai_verdict = await self._ask_gpt(
             f"[НАСТАВНИК] Еженедельный разбор.\n"
-            f"Эта неделя: avg {tw_avg:.1f}/6, GYM {tw_gym}/7, CODING {tw_coding}/7, "
+            f"Эта неделя: avg {tw_avg:.1f}/6, GYM {tw_gym}/7, продуктивных дней {tw_productive}/7, "
             f"TESTIK+ {tw_plus}/7, сон {tw_avg_sleep:.1f}ч, bad дней: {tw_bad}\n"
             f"vs прошлая: avg {pw_avg:.1f}/6\n"
             f"Данные:\n{summary_this}\n\nПрошлая:\n{summary_prev}\n\n"
@@ -827,7 +851,7 @@ class AIAnalyzer:
 
         text = f"📋 *ЕЖЕНЕДЕЛЬНЫЙ ОТЧЁТ*\n\n"
         text += f"🏆 *Грейд: {grade}* | Avg: {tw_avg:.1f}/6 ({delta_str} vs прошлая)\n"
-        text += f"🏋️ GYM: {tw_gym}/7 | 💻 CODE: {tw_coding}/7 | 🧪 PLUS: {tw_plus}/7\n"
+        text += f"🏋️ GYM: {tw_gym}/7 | 📋 Продуктивных: {tw_productive}/7 | 🧪 PLUS: {tw_plus}/7\n"
         text += f"😴 Сон: {tw_avg_sleep:.1f}ч | 📉 Bad дней: {tw_bad}\n\n"
         text += f"🔥 *Разбор:*\n{ai_verdict}"
         return text
@@ -1042,8 +1066,9 @@ class AIAnalyzer:
         missing = []
         if not today_rec.had_workout:
             missing.append("GYM")
-        if not today_rec.had_coding:
-            missing.append("CODING")
+        work_acts = [a for a in today_rec.activities if a.upper() not in ("MARK", "MARK'S WEAK", "MARK'S WEEK")]
+        if len(work_acts) < 2 and today_rec.total_hours < 1:
+            missing.append("Продуктивная работа (0 активностей)")
         if today_rec.testik == TestikStatus.MINUS:
             missing.append("TESTIK сломан")
         if today_rec.sleep.sleep_hours and today_rec.sleep.sleep_hours < 7:
@@ -1160,14 +1185,15 @@ class AIAnalyzer:
             avg_s = statistics.mean(recent_sleep)
             alerts.append(f"😴 Сон < 7ч уже 3 дня (avg {avg_s:.1f}ч). Ложись раньше. Точка.")
 
-        # No coding streak
-        no_code = 0
+        # No productive work streak (any meaningful activity beyond MARK)
+        no_work = 0
         for d in days:
-            if d.had_coding:
+            work_acts = [a for a in d.activities if a.upper() not in ("MARK", "MARK'S WEAK", "MARK'S WEEK")]
+            if len(work_acts) >= 2 or d.total_hours >= 1:
                 break
-            no_code += 1
-        if no_code >= 3:
-            alerts.append(f"💻 {no_code} дней без кодинга. Ты программист или нет?")
+            no_work += 1
+        if no_work >= 2:
+            alerts.append(f"📋 {no_work} дней почти без продуктивной работы. Хватит тупить — садись и делай.")
 
         # Approaching burnout
         risk = await self.predict_burnout(days[:14])
@@ -1275,12 +1301,12 @@ class AIAnalyzer:
             "🧬 Твоя формула идеального дня (rating ≥ 5):\n"
             "1. Сон X-Yч (корреляция: Z)\n"
             "2. GYM (дни с GYM: avg X vs Y без)\n"
-            "3. CODING Xч (но не > Yч)\n"
+            "3. Продуктивная работа Xч (любая: coding, study, AI, crypto — посмотри что у Тихона чаще всего)\n"
             "4. TESTIK PLUS (серия N+ = avg rating X)\n"
-            "5. ...\n"
+            "5. Какие конкретно активности дают лучший результат?\n"
             "⚡ Если всё совпадает: X% шанс на GOOD+\n"
             "📉 Если ничего: X% шанс\n\n"
-            "Используй РЕАЛЬНЫЕ цифры из данных. Не придумывай.",
+            "Используй РЕАЛЬНЫЕ цифры из данных. Не придумывай. Смотри на ВСЕ виды работы, не только кодинг.",
             max_tokens=800,
         )
 
