@@ -41,37 +41,57 @@ JOURNAL_TRUNCATE_ARCHIVE = 100   # short snippet for monthly summaries
 
 
 def _system_prompt() -> str:
-    """Build system prompt with current date injected."""
+    """Build system prompt — strict no-BS mentor persona."""
     today = date.today().isoformat()
-    return f"""Ты Jarvis — персональный AI-ассистент по продуктивности и жизни. Пользователя зовут Тихон. Он ведёт Notion-дневник с ежедневными MARK-записями.
+    return f"""Ты — жёсткий персональный наставник Тихона. Не ассистент, не друг, не психолог. Ты НАСТАВНИК. Твоя задача — делать Тихона лучше каждый день, без компромиссов и без сюсюканья.
 
-СЕГОДНЯ: {today}. Ты ВСЕГДА знаешь какое сегодня число и используешь это при анализе.
+СЕГОДНЯ: {today}.
 
-КРИТИЧЕСКИ ВАЖНО: journal_text — это ПОЛНАЯ картина дня: мысли, эмоции, контекст, события, самочувствие. Ты ОБЯЗАН читать и анализировать весь текст для глубокого понимания жизни — не ограничивайся цифрами.
+ТВОЙ ХАРАКТЕР:
+- Ты говоришь прямо и жёстко. Никаких "ну ладно", "ничего страшного", "бывает". Если Тихон проебался — ты говоришь это в лицо.
+- Ты требовательный. Стандарт — это минимум, не потолок. Good — это не хорошо, это НОРМАЛЬНО. Цель — perfect и very good.
+- Ты конкретный. Никакой воды. Цифры, даты, факты из данных. "Ты не тренировался 5 дней. Последний раз GYM был 12 февраля. Это неприемлемо."
+- Ты не жалеешь. Если Тихон ноет — ты говоришь "хватит ныть, вот план, действуй".
+- Ты помнишь ВСЁ. Каждый проёб, каждую серию, каждый провал. И напоминаешь об этом.
+- Ты хвалишь ТОЛЬКО за реальные достижения: рекорды, длинные серии, стабильный рост. Не за базу.
 
-Структура данных:
+СТРУКТУРА ДАННЫХ:
 - Активности: CODING, GYM, AI, UNIVERSITY, KATE, CRYPTO, FOOTBALL, TENNIS, PADEL и др.
 - TESTIK: PLUS = воздержание ✅, MINUS = мастурбация 🔴, MINUS_KATE = секс с девушкой 🟡
 - Оценка дня (MARK): perfect, very good, good, normal, bad, very bad
-- Сон: длительность, время подъёма, восстановление (Apple Watch)
+- Сон: длительность, время подъёма
+- journal_text — дневниковая запись с мыслями, контекстом, самочувствием
 
-Ты знаешь Тихона лично: его привычки, паттерны, что мотивирует и что разрушает продуктивность. Ты проактивен — не просто отвечаешь, а предлагаешь, предупреждаешь, подбадриваешь.
-
-У тебя есть ПОЛНАЯ история дневника Тихона (все данные за всё время). Когда тебя спрашивают о датах — отвечай на основе реальных данных, указывая самую раннюю и самую позднюю даты из предоставленных записей.
-
-Правила:
-- Анализируй ПОЛНЫЙ journal_text для контекста и эмоций
-- Давай конкретные рекомендации С ЦИФРАМИ из данных
-- Ссылайся на конкретные даты и события из истории
-- Отвечай на русском, кратко, с эмодзи
-- Будь как лучший друг + аналитик: честно, но с поддержкой"""
+ПРАВИЛА:
+- Всегда опирайся на КОНКРЕТНЫЕ данные: даты, цифры, серии
+- Сравнивай с лучшими периодами: "В январе ты делал X — почему сейчас нет?"
+- Называй вещи своими именами: проёб — это проёб, лень — это лень
+- Давай КОНКРЕТНЫЙ план: не "больше спи", а "ложись до 00:00, минимум 7ч, как 15-20 января когда avg rating был 5.2"
+- Отвечай на русском, кратко, агрессивно, по делу
+- Используй эмодзи для структуры, не для украшения"""
 
 
 def _chat_system_prompt() -> str:
-    """Build chat system prompt with current date."""
+    """Build chat system prompt — mentor mode in free chat."""
     return _system_prompt() + """
 
-Сейчас ты в режиме свободного чата. Пользователь может спросить что угодно о своей жизни, данных, паттернах. Отвечай естественно, как друг-аналитик. Используй данные дневника для подтверждения. Если пользователь расстроен — поддержи и предложи конкретный план действий на основе того, что работало раньше."""
+Режим свободного чата. Тихон может написать что угодно.
+
+ЕСЛИ он жалуется или ноет — НЕ утешай. Скажи прямо что не так, дай план, и потребуй действий.
+ЕСЛИ спрашивает о данных — дай точные цифры и жёсткую интерпретацию.
+ЕСЛИ хвастается — проверь по данным, действительно ли это достижение. Если да — коротко признай и поставь следующую планку. Если нет — скажи что это не повод расслабляться.
+ЕСЛИ несёт отмазки — разбей их фактами из его же дневника."""
+
+
+def _mentor_proactive_prompt() -> str:
+    """Prompt for proactive messages (morning, evening, alerts)."""
+    today = date.today().isoformat()
+    return f"""Ты — жёсткий наставник Тихона. Сегодня {today}. Ты сам пишешь Тихону — он тебя НЕ спрашивал. Это значит:
+- Будь краток и конкретен (5-10 строк максимум)
+- Говори только ВАЖНОЕ: проблемы, проёбы, требования, конкретный план
+- Никакой воды, никаких "доброе утро, как дела"
+- Цифры и факты из данных
+- Заканчивай КОНКРЕТНЫМ действием: что сделать прямо сейчас"""
 
 
 class AIAnalyzer:
@@ -749,30 +769,74 @@ class AIAnalyzer:
     # ── Weekly digest ────────────────────────────────────────────────────────
 
     async def weekly_digest(self, records: list[DailyRecord]) -> str:
+        """Weekly accountability report — brutal grading."""
         days = sorted(
             [r for r in records if not r.is_weekly_summary],
             key=lambda r: r.entry_date,
             reverse=True,
         )
         if len(days) < 7:
-            return "📭 Нужно минимум неделя данных."
+            return "Недостаточно данных. Веди дневник каждый день."
 
         this_week = days[:7]
         prev_week = days[7:14] if len(days) >= 14 else []
 
-        summary_this = self._records_to_summary(this_week)
-        summary_prev = self._records_to_summary(prev_week) if prev_week else "Нет данных за прошлую неделю."
+        # Compute week stats
+        tw_ratings = [r.rating.score for r in this_week if r.rating]
+        tw_avg = statistics.mean(tw_ratings) if tw_ratings else 0
+        tw_gym = sum(1 for r in this_week if r.had_workout)
+        tw_coding = sum(1 for r in this_week if r.had_coding)
+        tw_plus = sum(1 for r in this_week if r.testik == TestikStatus.PLUS)
+        tw_sleep = [r.sleep.sleep_hours for r in this_week if r.sleep.sleep_hours]
+        tw_avg_sleep = statistics.mean(tw_sleep) if tw_sleep else 0
+        tw_bad = sum(1 for r in this_week if r.rating and r.rating.score <= 2)
 
-        return await self._ask_gpt(
-            f"Текущая неделя:\n{summary_this}\n\nПрошлая неделя:\n{summary_prev}\n\n"
-            "Дай еженедельный дайджест: главное за неделю, сравнение с прошлой, тренды, один совет. Учитывай journal. Кратко, с эмодзи."
+        # Previous week for comparison
+        pw_ratings = [r.rating.score for r in prev_week if r.rating] if prev_week else []
+        pw_avg = statistics.mean(pw_ratings) if pw_ratings else 0
+
+        # Grade the week
+        if tw_avg >= 5:
+            grade = "A"
+        elif tw_avg >= 4:
+            grade = "B"
+        elif tw_avg >= 3:
+            grade = "C"
+        elif tw_avg >= 2:
+            grade = "D"
+        else:
+            grade = "F"
+
+        delta = tw_avg - pw_avg if pw_avg else 0
+        delta_str = f"{'↑' if delta > 0 else '↓'} {delta:+.1f}" if pw_avg else "—"
+
+        summary_this = self._records_to_summary(this_week)
+        summary_prev = self._records_to_summary(prev_week) if prev_week else "нет данных"
+
+        ai_verdict = await self._ask_gpt(
+            f"[НАСТАВНИК] Еженедельный разбор.\n"
+            f"Эта неделя: avg {tw_avg:.1f}/6, GYM {tw_gym}/7, CODING {tw_coding}/7, "
+            f"TESTIK+ {tw_plus}/7, сон {tw_avg_sleep:.1f}ч, bad дней: {tw_bad}\n"
+            f"vs прошлая: avg {pw_avg:.1f}/6\n"
+            f"Данные:\n{summary_this}\n\nПрошлая:\n{summary_prev}\n\n"
+            "Дай ЖЁСТКИЙ разбор недели. Что конкретно было проёбано, что сделано хорошо (если есть). "
+            "Сравни с прошлой неделей. В конце дай 3 ОБЯЗАТЕЛЬНЫХ задачи на следующую неделю. "
+            "Если неделя слабая — скажи это прямо. 8-12 строк.",
+            max_tokens=700,
         )
+
+        text = f"📋 *ЕЖЕНЕДЕЛЬНЫЙ ОТЧЁТ*\n\n"
+        text += f"🏆 *Грейд: {grade}* | Avg: {tw_avg:.1f}/6 ({delta_str} vs прошлая)\n"
+        text += f"🏋️ GYM: {tw_gym}/7 | 💻 CODE: {tw_coding}/7 | 🧪 PLUS: {tw_plus}/7\n"
+        text += f"😴 Сон: {tw_avg_sleep:.1f}ч | 📉 Bad дней: {tw_bad}\n\n"
+        text += f"🔥 *Разбор:*\n{ai_verdict}"
+        return text
 
     # ── Alerts (pure logic) ──────────────────────────────────────────────────
 
     @staticmethod
     def check_alerts(records: list[DailyRecord]) -> list[str]:
-        """Pure logic. Alerts: 3+ days no workout, sleep<6h two days in a row, TESTIK MINUS streak>=3, last rating bad/very_bad."""
+        """Strict alerts — no soft language."""
         alerts: list[str] = []
         days = sorted(
             [r for r in records if not r.is_weekly_summary],
@@ -782,24 +846,26 @@ class AIAnalyzer:
         if not days:
             return alerts
 
-        # 3+ days no workout
-        no_workout_streak = 0
+        # No workout streak
+        no_workout = 0
         for r in days:
             if r.had_workout:
                 break
-            no_workout_streak += 1
-        if no_workout_streak >= 3:
-            alerts.append(f"🏋️ Уже {no_workout_streak} дней без тренировки")
+            no_workout += 1
+        if no_workout >= 4:
+            alerts.append(f"🏋️ {no_workout} дней без тренировки. Тело деградирует. Иди в зал СЕГОДНЯ.")
+        elif no_workout >= 2:
+            alerts.append(f"🏋️ {no_workout} дня без GYM. Не затягивай.")
 
-        # Sleep < 6h two days in a row
-        for i in range(len(days) - 1):
+        # Sleep < 6h
+        for i in range(min(len(days) - 1, 2)):
             a, b = days[i], days[i + 1]
-            if a.sleep.sleep_hours is not None and b.sleep.sleep_hours is not None:
+            if a.sleep.sleep_hours and b.sleep.sleep_hours:
                 if a.sleep.sleep_hours < 6 and b.sleep.sleep_hours < 6:
-                    alerts.append("😴 Два дня подряд сон < 6ч")
+                    alerts.append(f"😴 Сон < 6ч два дня подряд ({a.sleep.sleep_hours}ч, {b.sleep.sleep_hours}ч). Это саботаж.")
                     break
 
-        # TESTIK MINUS streak >= 3 (only MINUS, not MINUS_KATE)
+        # TESTIK MINUS streak
         minus_streak = 0
         for r in days:
             if r.testik == TestikStatus.MINUS:
@@ -807,12 +873,24 @@ class AIAnalyzer:
             else:
                 break
         if minus_streak >= 3:
-            alerts.append(f"🔴 TESTIK MINUS {minus_streak} дней подряд")
+            alerts.append(f"🔴 TESTIK MINUS {minus_streak} дней подряд. Дисциплина на нуле. Вспомни как ты себя чувствуешь на серии PLUS.")
+        elif minus_streak >= 2:
+            alerts.append(f"🔴 TESTIK MINUS {minus_streak} дня. Не дай серии разрастись.")
 
-        # Last rating bad or very_bad
+        # Bad/very_bad rating
         last = days[0]
-        if last.rating in (DayRating.BAD, DayRating.VERY_BAD):
-            alerts.append(f"📉 Последняя оценка дня: {last.rating.value}")
+        if last.rating == DayRating.VERY_BAD:
+            alerts.append("📉 Вчера: VERY BAD. Так жить нельзя. Что пошло не так?")
+        elif last.rating == DayRating.BAD:
+            alerts.append("📉 Вчера: BAD. Не позволяй этому стать привычкой.")
+
+        # Normal is not acceptable as a pattern
+        normal_streak = 0
+        for r in days[:5]:
+            if r.rating and r.rating.score <= 3:
+                normal_streak += 1
+        if normal_streak >= 3:
+            alerts.append(f"⚠️ {normal_streak} из 5 дней — normal или хуже. Ты можешь больше. Перестань плыть по течению.")
 
         return alerts
 
@@ -856,63 +934,197 @@ class AIAnalyzer:
     # ══════════════════════════════════════════════════════════════════════
 
     async def morning_briefing(self, records: list[DailyRecord]) -> str:
-        """Generate morning briefing with yesterday summary, streaks, prediction, recommendations."""
+        """Morning kick — harsh accountability briefing."""
         days = sorted(
             [r for r in records if not r.is_weekly_summary],
             key=lambda r: r.entry_date, reverse=True,
         )
         if not days:
-            return "📭 Нет данных для утреннего брифинга."
+            return "Нет данных. Ты вообще ведёшь дневник?"
 
         yesterday = days[0]
         streaks = self.compute_streaks(days)
         alerts = self.check_alerts(days[:14])
 
-        y_rating = yesterday.rating.emoji + " " + yesterday.rating.value if yesterday.rating else "N/A"
-        y_sleep = f"{yesterday.sleep.sleep_hours}ч" if yesterday.sleep.sleep_hours else "N/A"
-        y_testik = yesterday.testik.label if yesterday.testik else "N/A"
-        y_acts = ", ".join(a for a in yesterday.activities if a != "MARK") or "—"
+        y_rating = yesterday.rating.value if yesterday.rating else "НЕ ПОСТАВИЛ"
+        y_score = yesterday.rating.score if yesterday.rating else 0
+        y_sleep = f"{yesterday.sleep.sleep_hours}ч" if yesterday.sleep.sleep_hours else "?"
+        y_testik = yesterday.testik.value if yesterday.testik else "?"
+        y_acts = ", ".join(a for a in yesterday.activities if a != "MARK") or "НИЧЕГО"
 
-        streaks_text = "\n".join(
-            f"  {s.emoji} {s.name}: {s.current} дн. (рекорд: {s.record})"
-            for s in streaks if s.current > 0
-        )
+        # Verdict on yesterday
+        if y_score >= 5:
+            verdict = "Нормально. Не расслабляйся."
+        elif y_score >= 4:
+            verdict = "Средне. Можешь лучше."
+        elif y_score >= 3:
+            verdict = "Слабо. Сегодня исправляй."
+        else:
+            verdict = "Проёб. Хватит. Сегодня пашешь."
 
-        alert_text = ""
-        if alerts:
-            alert_text = "\n⚠️ Внимание:\n" + "\n".join(f"  • {a}" for a in alerts)
+        # Broken or at-risk streaks
+        streak_warnings = []
+        for s in streaks:
+            if s.current == 0 and s.record > 0:
+                streak_warnings.append(f"💀 {s.name}: серия сброшена (был рекорд {s.record})")
+            elif 0 < s.current and s.current >= s.record - 1:
+                streak_warnings.append(f"🔥 {s.name}: {s.current} дн. — до рекорда {s.record - s.current}!")
 
-        # Sleep trend (last 3 days)
-        sleep_trend = ""
-        recent_sleep = [r.sleep.sleep_hours for r in days[:3] if r.sleep.sleep_hours]
-        if len(recent_sleep) >= 2:
-            trend = " → ".join(f"{s}ч" for s in recent_sleep)
-            if recent_sleep[0] < recent_sleep[-1]:
-                sleep_trend = f"\n📉 Тренд сна: {trend} (падает!)"
+        # Alerts
+        alert_lines = []
+        for a in alerts:
+            alert_lines.append(f"⛔ {a}")
 
         summary = self._records_to_summary(days[:7])
-        ai_advice = await self._ask_gpt(
-            f"Утренний брифинг. Последние 7 дней:\n{summary}\n\n"
-            "Дай 1-2 конкретных рекомендации на сегодня, основываясь на паттернах из journal_text. "
-            "Упомяни конкретные цифры и что работало в похожие дни. Кратко, 3-4 строки.",
+        ai_orders = await self._ask_gpt(
+            f"[НАСТАВНИК] Утренний разнос. Вчера: {y_rating}, сон {y_sleep}, testik {y_testik}, "
+            f"активности: {y_acts}.\nПоследние 7 дней:\n{summary}\n\n"
+            "Дай Тихону ПРИКАЗ на сегодня: 3 конкретных пункта что он ОБЯЗАН сделать. "
+            "Основывайся на его проёбах за последнюю неделю. Жёстко, без нытья. 4-5 строк.",
             max_tokens=400,
         )
 
-        text = (
-            f"☀️ Доброе утро, Тихон!\n\n"
-            f"📊 *Вчера ({yesterday.entry_date}):*\n"
-            f"  {y_rating} | 😴 {y_sleep} | 🧪 {y_testik}\n"
-            f"  📋 {y_acts}\n"
-        )
-        if streaks_text:
-            text += f"\n🔥 *Серии:*\n{streaks_text}\n"
-        text += sleep_trend
-        text += f"\n💡 *Рекомендация:*\n{ai_advice}"
-        text += alert_text
+        text = f"⚡ *Подъём, Тихон.*\n\n"
+        text += f"📊 *Вчера ({yesterday.entry_date}):* {y_rating.upper()} | 😴 {y_sleep} | 🧪 {y_testik}\n"
+        text += f"📋 {y_acts}\n"
+        text += f"*Вердикт:* {verdict}\n"
+
+        if streak_warnings:
+            text += "\n" + "\n".join(streak_warnings) + "\n"
+        if alert_lines:
+            text += "\n" + "\n".join(alert_lines) + "\n"
+
+        text += f"\n🎯 *Приказ на сегодня:*\n{ai_orders}"
         return text
 
+    async def evening_review(self, records: list[DailyRecord]) -> str:
+        """Evening accountability review — what was done today, what was missed."""
+        days = sorted(
+            [r for r in records if not r.is_weekly_summary],
+            key=lambda r: r.entry_date, reverse=True,
+        )
+        if not days:
+            return "Нет данных за сегодня. Ты вообще что-то делал?"
+
+        today_rec = days[0]
+        today_date = date.today()
+
+        # Check if we have today's data
+        has_today = today_rec.entry_date == today_date
+        if not has_today and len(days) > 0:
+            today_rec = days[0]  # use latest available
+
+        rating = today_rec.rating.value if today_rec.rating else "НЕ ПОСТАВИЛ"
+        score = today_rec.rating.score if today_rec.rating else 0
+        sleep = f"{today_rec.sleep.sleep_hours}ч" if today_rec.sleep.sleep_hours else "?"
+        testik = today_rec.testik.value if today_rec.testik else "?"
+        acts = ", ".join(a for a in today_rec.activities if a != "MARK") or "НИЧЕГО"
+        act_count = len([a for a in today_rec.activities if a != "MARK"])
+
+        # Grade the day
+        if score >= 5:
+            grade = "A"
+            grade_comment = "Достойно. Не привыкай — завтра тоже надо."
+        elif score == 4:
+            grade = "B"
+            grade_comment = "Сойдёт, но ты мог лучше."
+        elif score == 3:
+            grade = "C"
+            grade_comment = "Посредственно. Что помешало?"
+        elif score >= 1:
+            grade = "D"
+            grade_comment = "Слил день. Что случилось?"
+        else:
+            grade = "F"
+            grade_comment = "Данных нет или полный ноль. Разберись."
+
+        # What's missing today
+        missing = []
+        if not today_rec.had_workout:
+            missing.append("GYM")
+        if not today_rec.had_coding:
+            missing.append("CODING")
+        if today_rec.testik == TestikStatus.MINUS:
+            missing.append("TESTIK сломан")
+        if today_rec.sleep.sleep_hours and today_rec.sleep.sleep_hours < 7:
+            missing.append(f"Сон всего {today_rec.sleep.sleep_hours}ч")
+
+        # Week context
+        week_days = [r for r in days[:7] if not r.is_weekly_summary]
+        week_ratings = [r.rating.score for r in week_days if r.rating]
+        week_avg = statistics.mean(week_ratings) if week_ratings else 0
+        week_gym = sum(1 for r in week_days if r.had_workout)
+
+        summary = self._records_to_summary(days[:7])
+        ai_verdict = await self._ask_gpt(
+            f"[НАСТАВНИК] Вечерний разбор. Сегодня: rating={rating}, сон={sleep}, testik={testik}, "
+            f"активности=[{acts}], пропущено: [{', '.join(missing) or 'ничего'}].\n"
+            f"Неделя: avg rating {week_avg:.1f}/6, GYM {week_gym}/7.\n"
+            f"Данные:\n{summary}\n\n"
+            "Жёстко оцени день. Что Тихон сделал хорошо (коротко), что проебал (подробно), "
+            "и что он ОБЯЗАН исправить завтра. 5-7 строк, никакого сюсюканья.",
+            max_tokens=500,
+        )
+
+        text = f"🌙 *Итоги дня ({today_rec.entry_date})*\n\n"
+        text += f"📊 Оценка: *{rating.upper()}* | Грейд: *{grade}*\n"
+        text += f"😴 {sleep} | 🧪 {testik} | 📋 {act_count} активностей\n"
+        text += f"*{grade_comment}*\n"
+
+        if missing:
+            text += f"\n❌ *Пропущено:* {', '.join(missing)}\n"
+
+        text += f"\n📈 *Неделя:* avg {week_avg:.1f}/6, GYM {week_gym}/7\n"
+        text += f"\n🔥 *Разбор:*\n{ai_verdict}"
+        return text
+
+    async def midday_check(self, records: list[DailyRecord]) -> Optional[str]:
+        """Midday nudge — only fires if today looks empty or problematic."""
+        days = sorted(
+            [r for r in records if not r.is_weekly_summary],
+            key=lambda r: r.entry_date, reverse=True,
+        )
+        if not days:
+            return "Ты сегодня вообще что-нибудь записал? Notion пустой. Действуй."
+
+        today_rec = days[0]
+        today_date = date.today()
+
+        # Only fire if today has no data or very little
+        if today_rec.entry_date == today_date:
+            acts = [a for a in today_rec.activities if a != "MARK"]
+            if len(acts) >= 2:
+                return None  # Day is going fine, don't bother
+
+        # Check last few days for patterns
+        recent_bad = sum(1 for d in days[:3]
+                        if d.rating and d.rating.score <= 3)
+
+        messages = []
+        if today_rec.entry_date != today_date:
+            messages.append("Полдня прошло, а в Notion ни одной записи. Чем ты занят?")
+
+        if recent_bad >= 2:
+            messages.append(
+                f"Последние дни — слабые ({', '.join(d.rating.value for d in days[:3] if d.rating)}). "
+                "Сейчас самое время сломать серию. Встань и сделай хоть что-то."
+            )
+
+        no_gym = 0
+        for d in days:
+            if d.had_workout:
+                break
+            no_gym += 1
+        if no_gym >= 2:
+            messages.append(f"Ты не тренировался {no_gym} дней. Сегодня — GYM. Без вариантов.")
+
+        if not messages:
+            return None
+
+        return "⚡ *Дневная проверка*\n\n" + "\n".join(f"• {m}" for m in messages)
+
     async def enhanced_alerts(self, records: list[DailyRecord]) -> list[str]:
-        """Enhanced smart alerts with pattern detection and historical context."""
+        """Harsh alerts — catch every failure and pattern."""
         alerts = self.check_alerts(records)
         days = sorted(
             [r for r in records if not r.is_weekly_summary],
@@ -925,18 +1137,42 @@ class AIAnalyzer:
         if len(days) >= 3:
             last3_ratings = [d.rating.score for d in days[:3] if d.rating]
             if len(last3_ratings) == 3 and last3_ratings[0] < last3_ratings[1] < last3_ratings[2]:
-                alerts.append(
-                    f"📉 Оценки падают 3 дня: {' → '.join(str(r) for r in reversed(last3_ratings))}/6"
-                )
+                vals = ' → '.join(str(r) for r in reversed(last3_ratings))
+                alerts.append(f"📉 Оценки падают 3 дня подряд: {vals}/6. Ты деградируешь.")
+
+        # No good days in a row
+        bad_streak = 0
+        for d in days:
+            if d.rating and d.rating.score >= 4:
+                break
+            bad_streak += 1
+        if bad_streak >= 3:
+            alerts.append(f"💀 {bad_streak} дней без нормальной оценки. Это неприемлемо.")
 
         # Anomalously few activities
-        if days[0].tasks_count <= 1 and days[0].tasks_count < statistics.mean([d.tasks_count for d in days[:7]]) * 0.3:
-            alerts.append("📋 Аномально мало активностей сегодня")
+        avg_tasks = statistics.mean([d.tasks_count for d in days[:7]]) if len(days) >= 7 else 3
+        if days[0].tasks_count <= 1 and days[0].tasks_count < avg_tasks * 0.3:
+            alerts.append("📋 Сегодня почти ничего не сделано. В чём проблема?")
+
+        # Sleep deteriorating
+        recent_sleep = [r.sleep.sleep_hours for r in days[:3] if r.sleep.sleep_hours]
+        if len(recent_sleep) >= 3 and all(s < 7 for s in recent_sleep):
+            avg_s = statistics.mean(recent_sleep)
+            alerts.append(f"😴 Сон < 7ч уже 3 дня (avg {avg_s:.1f}ч). Ложись раньше. Точка.")
+
+        # No coding streak
+        no_code = 0
+        for d in days:
+            if d.had_coding:
+                break
+            no_code += 1
+        if no_code >= 3:
+            alerts.append(f"💻 {no_code} дней без кодинга. Ты программист или нет?")
 
         # Approaching burnout
         risk = await self.predict_burnout(days[:14])
         if risk.risk_score >= 60:
-            alerts.append(f"🔥 Приближаемся к выгоранию ({risk.risk_score:.0f}%)")
+            alerts.append(f"🔥 Burnout risk {risk.risk_score:.0f}%. Нужен перезапуск: GYM + сон + режим.")
 
         return alerts
 

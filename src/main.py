@@ -121,9 +121,10 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
     text = (
-        "👋 *Привет! Я Jarvis — твой AI Дневник-Аналитик*\n\n"
-        "Я читаю весь твой Notion-дневник и вижу полную картину жизни.\n"
-        "Просто напиши мне текст — и я отвечу как друг-аналитик.\n\n"
+        "⚡ *Я — твой наставник.*\n\n"
+        "Я читаю ВЕСЬ твой Notion-дневник. Каждый день, каждый проёб, каждую серию.\n"
+        "Я буду писать тебе сам: утром — приказ на день, вечером — разбор.\n"
+        "Не жди похвалы. Жди правду.\n\n"
         "📊 *Аналитика:*\n"
         "/analyze — анализ месяца\n"
         "/compare — сравнить 2 месяца\n"
@@ -146,7 +147,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/set\\_goal / /goals — цели\n\n"
         "🧪 /optimal\\_hours /kate\\_impact /testik\\_patterns\n"
         "😴 /sleep\\_optimizer /money\\_forecast /weak\\_spots\n\n"
-        "💬 *Или просто напиши любое сообщение — я пойму!*"
+        "💬 *Или просто напиши — я отвечу прямо, без сюсюканья.*"
     )
     await _safe_reply(update.message, text)
 
@@ -621,13 +622,15 @@ bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_free_
 # ═══════════════════════════════════════════════════════════════════════════
 
 _last_briefing_date: str = ""
+_last_evening_date: str = ""
+_last_midday_date: str = ""
 _last_alert_key: str = ""
 _last_digest_date: str = ""
 
 
 async def _background_loop() -> None:
-    """Runs every 30 minutes: auto-sync Notion, morning briefing, alerts, weekly digest."""
-    global _last_briefing_date, _last_alert_key, _last_digest_date
+    """Runs every 15 minutes: auto-sync, morning kick, midday check, evening review, alerts, weekly digest."""
+    global _last_briefing_date, _last_evening_date, _last_midday_date, _last_alert_key, _last_digest_date
     await asyncio.sleep(30)
 
     while True:
@@ -636,15 +639,15 @@ async def _background_loop() -> None:
             today_str = now.strftime("%Y-%m-%d")
             uids = list(settings.telegram.allowed_user_ids)
 
-            # Auto-sync: refresh RECENT data from Notion every cycle (last 7 days — fast)
+            # Auto-sync: refresh RECENT data from Notion every cycle
             try:
                 count = await notion_service.sync_recent()
                 logger.info("Auto-sync complete: %d recent records", count)
             except Exception as e:
                 logger.warning("Auto-sync error: %s", e)
 
-            # Morning briefing: ~9:00 UTC (adjust for timezone)
-            if 8 <= now.hour <= 10 and _last_briefing_date != today_str:
+            # ── Morning kick: 6:00-8:00 UTC (9:00-11:00 MSK) ──
+            if 6 <= now.hour <= 8 and _last_briefing_date != today_str:
                 _last_briefing_date = today_str
                 try:
                     records = await notion_service.get_recent(14)
@@ -657,15 +660,44 @@ async def _background_loop() -> None:
                 except Exception as e:
                     logger.error("Morning briefing error: %s", e, exc_info=True)
 
-            # Enhanced alerts: every 6 hours (deduplicated by date+hour key)
-            alert_key = f"{today_str}-{now.hour // 6}"
-            if now.hour in (0, 6, 12, 18) and now.minute < 35 and _last_alert_key != alert_key:
+            # ── Midday check: 11:00-12:00 UTC (14:00-15:00 MSK) ──
+            if 11 <= now.hour <= 12 and _last_midday_date != today_str:
+                _last_midday_date = today_str
+                try:
+                    records = await notion_service.get_recent(7)
+                    nudge = await ai_analyzer.midday_check(records)
+                    if nudge:
+                        for uid in uids:
+                            try:
+                                await _safe_send(uid, truncate_text(nudge))
+                            except Exception as e:
+                                logger.warning("Midday check send error: %s", e)
+                except Exception as e:
+                    logger.error("Midday check error: %s", e, exc_info=True)
+
+            # ── Evening review: 19:00-21:00 UTC (22:00-00:00 MSK) ──
+            if 19 <= now.hour <= 21 and _last_evening_date != today_str:
+                _last_evening_date = today_str
+                try:
+                    records = await notion_service.get_recent(14)
+                    review = await ai_analyzer.evening_review(records)
+                    for uid in uids:
+                        try:
+                            await _safe_send(uid, truncate_text(review))
+                        except Exception as e:
+                            logger.warning("Evening review send error: %s", e)
+                except Exception as e:
+                    logger.error("Evening review error: %s", e, exc_info=True)
+
+            # ── Alerts: every 4 hours (deduplicated) ──
+            alert_key = f"{today_str}-{now.hour // 4}"
+            if now.minute < 20 and _last_alert_key != alert_key:
                 _last_alert_key = alert_key
                 try:
                     records = await notion_service.get_recent(14)
                     alerts = await ai_analyzer.enhanced_alerts(records)
                     if alerts:
-                        alert_text = "⚡ *Jarvis Alert*\n\n" + "\n".join(f"• {a}" for a in alerts)
+                        alert_text = "⛔ *Наставник:*\n\n" + "\n".join(f"• {a}" for a in alerts)
                         for uid in uids:
                             try:
                                 await _safe_send(uid, alert_text)
@@ -674,16 +706,15 @@ async def _background_loop() -> None:
                 except Exception as e:
                     logger.error("Alert loop error: %s", e, exc_info=True)
 
-            # Weekly digest: Sunday 18:00 UTC
+            # ── Weekly digest: Sunday 18:00 UTC (21:00 MSK) ──
             if now.weekday() == 6 and 17 <= now.hour <= 19 and _last_digest_date != today_str:
                 _last_digest_date = today_str
                 try:
                     records = await notion_service.get_recent(14)
                     digest = await ai_analyzer.weekly_digest(records)
-                    digest_text = f"📋 *Еженедельный дайджест*\n\n{digest}"
                     for uid in uids:
                         try:
-                            await _safe_send(uid, truncate_text(digest_text))
+                            await _safe_send(uid, truncate_text(digest))
                         except Exception as e:
                             logger.warning("Digest send error: %s", e)
                 except Exception as e:
@@ -692,7 +723,7 @@ async def _background_loop() -> None:
         except Exception as e:
             logger.error("Background loop error: %s", e, exc_info=True)
 
-        await asyncio.sleep(30 * 60)
+        await asyncio.sleep(15 * 60)  # check every 15 minutes
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -750,7 +781,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start sync in background — don't block server startup
     startup_sync_task = asyncio.create_task(_startup_sync())
     bg_task = asyncio.create_task(_background_loop())
-    logger.info("Jarvis v3 started — 24 commands + free-chat + proactive AI + auto-sync")
+    logger.info("Mentor v4 started — 24 commands + free-chat + morning/evening/midday proactive + auto-sync")
     yield
 
     startup_sync_task.cancel()

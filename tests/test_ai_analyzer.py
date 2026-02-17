@@ -123,13 +123,13 @@ class TestMorningBriefing:
     @pytest.mark.asyncio
     async def test_briefing(self, analyzer, sample_records):
         result = await analyzer.morning_briefing(sample_records)
-        assert "Доброе утро" in result
         assert "Тихон" in result
+        assert "Приказ" in result or "Вердикт" in result
 
     @pytest.mark.asyncio
     async def test_empty(self, analyzer):
         result = await analyzer.morning_briefing([])
-        assert "Нет данных" in result
+        assert "Нет данных" in result or "дневник" in result
 
 
 class TestEnhancedAlerts:
