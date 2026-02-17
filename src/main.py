@@ -744,22 +744,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _polling_task = asyncio.create_task(_run_polling())
         logger.info("Polling mode active — bot will pull updates from Telegram")
 
-    # Initial data sync — load full history from Notion on startup
-    try:
-        count = await notion_service.sync_all()
-        logger.info("Startup sync complete: %d records loaded from Notion", count)
-    except Exception as e:
-        logger.warning("Startup sync failed (will retry in background): %s", e)
-
+    # Start sync in background — don't block server startup
+    startup_sync_task = asyncio.create_task(_startup_sync())
     bg_task = asyncio.create_task(_background_loop())
     logger.info("Jarvis v3 started — 24 commands + free-chat + proactive AI + auto-sync")
     yield
 
+    startup_sync_task.cancel()
     bg_task.cancel()
     if _polling_task:
         _polling_task.cancel()
     await bot_app.stop()
     await bot_app.shutdown()
+
+
+async def _startup_sync() -> None:
+    """Load full history from Notion in background (non-blocking)."""
+    try:
+        logger.info("Starting background data sync from Notion...")
+        count = await notion_service.sync_all()
+        logger.info("Startup sync complete: %d records loaded from Notion", count)
+    except Exception as e:
+        logger.warning("Startup sync failed (will retry in 30 min): %s", e)
 
 
 async def _run_polling() -> None:
