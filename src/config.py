@@ -49,7 +49,7 @@ class AppConfig:
         default_factory=lambda: int(os.getenv("RATE_LIMIT_PER_MINUTE", "20"))
     )
     cache_ttl_seconds: int = field(
-        default_factory=lambda: int(os.getenv("CACHE_TTL_SECONDS", "300"))
+        default_factory=lambda: int(os.getenv("CACHE_TTL_SECONDS", "3600"))
     )
 
     @property

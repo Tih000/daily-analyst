@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
 from datetime import date, timedelta
@@ -24,6 +25,9 @@ logger = logging.getLogger(__name__)
 NOTION_API = "https://api.notion.com/v1"
 NOTION_VERSION = "2022-06-28"
 
+# Max parallel block fetches (Notion rate limit is ~3 req/sec)
+_BLOCK_CONCURRENCY = 5
+
 # Tags that map to specific boolean flags on DailyRecord
 _WORKOUT_TAGS = {"GYM", "WORKOUT", "FOOTBALL", "TENNIS", "PADEL", "SPORT"}
 _UNI_TAGS = {"UNIVERSITY", "UNI"}
@@ -44,6 +48,13 @@ class NotionService:
             "Notion-Version": NOTION_VERSION,
             "Content-Type": "application/json",
         }
+        self._http: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Reuse a single HTTP client for all requests."""
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=30, headers=self._headers)
+        return self._http
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -53,16 +64,8 @@ class NotionService:
         end_date: Optional[date] = None,
         force_refresh: bool = False,
     ) -> list[DailyRecord]:
-        """
-        Fetch and aggregate daily records.
-
-        1. Query Notion database for all task entries in range
-        2. For MARK entries: fetch page content (blocks) to get body text
-        3. Group tasks by date → build DailyRecord per day
-        4. Cache results
-        """
+        """Return daily records, serving from cache when possible."""
         if not force_refresh and self._cache.is_cache_fresh():
-            logger.debug("Serving daily records from cache")
             return self._cache.get_daily_records(start_date, end_date)
 
         if start_date is None:
@@ -70,20 +73,27 @@ class NotionService:
         if end_date is None:
             end_date = date.today()
 
-        # Step 1: Query all task pages
         raw_pages = await self._query_database(start_date, end_date)
         tasks = [self._parse_page(p) for p in raw_pages]
         tasks = [t for t in tasks if t is not None]
 
-        # Step 2: Fetch body text for MARK entries (contains sleep, testik, rating)
-        for task in tasks:
-            if task.title.upper() in ("MARK", "MARK'S WEAK", "MARK'S WEEK"):
-                task.body_text = await self._get_page_blocks_text(task.id)
+        # Fetch MARK blocks in PARALLEL (main speed-up)
+        mark_tasks = [t for t in tasks if t.title.upper() in ("MARK", "MARK'S WEAK", "MARK'S WEEK")]
+        if mark_tasks:
+            logger.info("Fetching blocks for %d MARK entries (parallel, concurrency=%d)...", len(mark_tasks), _BLOCK_CONCURRENCY)
+            sem = asyncio.Semaphore(_BLOCK_CONCURRENCY)
 
-        # Step 3: Group by date → DailyRecord
+            async def _fetch_body(task: TaskEntry) -> None:
+                async with sem:
+                    try:
+                        task.body_text = await self._get_page_blocks_text(task.id)
+                    except Exception as e:
+                        logger.warning("Block fetch failed for %s: %s", task.id, e)
+
+            await asyncio.gather(*[_fetch_body(t) for t in mark_tasks])
+
         records = self._aggregate_daily(tasks)
 
-        # Step 4: Cache
         if tasks:
             self._cache.upsert_tasks(tasks)
         if records:
@@ -95,6 +105,11 @@ class NotionService:
     async def get_daily_for_month(
         self, year: int, month: int, force_refresh: bool = False
     ) -> list[DailyRecord]:
+        """Serve from cache if fresh, otherwise fetch just that month."""
+        if not force_refresh and self._cache.is_cache_fresh():
+            start = date(year, month, 1)
+            end = date(year + 1, 1, 1) - timedelta(days=1) if month == 12 else date(year, month + 1, 1) - timedelta(days=1)
+            return self._cache.get_daily_records(start, end)
         start = date(year, month, 1)
         if month == 12:
             end = date(year + 1, 1, 1) - timedelta(days=1)
@@ -105,6 +120,11 @@ class NotionService:
     async def get_recent(
         self, days: int = 30, force_refresh: bool = False
     ) -> list[DailyRecord]:
+        """Serve from cache if fresh, otherwise fetch."""
+        if not force_refresh and self._cache.is_cache_fresh():
+            return self._cache.get_daily_records(
+                date.today() - timedelta(days=days), date.today()
+            )
         return await self.get_daily_records(
             start_date=date.today() - timedelta(days=days),
             end_date=date.today(),
@@ -112,11 +132,20 @@ class NotionService:
         )
 
     async def sync_all(self) -> int:
+        """Full sync — used on startup and periodically."""
         records = await self.get_daily_records(
             start_date=date.today() - timedelta(days=900),
             force_refresh=True,
         )
         self._cache.cleanup_old(keep_days=900)
+        return len(records)
+
+    async def sync_recent(self) -> int:
+        """Incremental sync — fetch only last 7 days (fast)."""
+        records = await self.get_daily_records(
+            start_date=date.today() - timedelta(days=7),
+            force_refresh=True,
+        )
         return len(records)
 
     # ── Notion API calls ────────────────────────────────────────────────────
@@ -129,6 +158,7 @@ class NotionService:
         all_pages: list[dict[str, Any]] = []
         has_more = True
         next_cursor: Optional[str] = None
+        client = await self._get_client()
 
         filter_body: dict[str, Any] = {
             "filter": {
@@ -141,24 +171,22 @@ class NotionService:
             "page_size": 100,
         }
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            while has_more:
-                if next_cursor:
-                    filter_body["start_cursor"] = next_cursor
+        while has_more:
+            if next_cursor:
+                filter_body["start_cursor"] = next_cursor
 
-                resp = await client.post(
-                    f"{NOTION_API}/databases/{self._database_id}/query",
-                    headers=self._headers,
-                    json=filter_body,
-                )
-                resp.raise_for_status()
-                data = resp.json()
+            resp = await client.post(
+                f"{NOTION_API}/databases/{self._database_id}/query",
+                json=filter_body,
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-                all_pages.extend(data.get("results", []))
-                has_more = data.get("has_more", False)
-                next_cursor = data.get("next_cursor")
+            all_pages.extend(data.get("results", []))
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
 
-        logger.info("Fetched %d task pages from Notion", len(all_pages))
+        logger.info("Fetched %d task pages from Notion (%s → %s)", len(all_pages), start_date, end_date)
         return all_pages
 
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(min=0.5, max=5))
@@ -167,24 +195,24 @@ class NotionService:
         blocks_text: list[str] = []
         has_more = True
         next_cursor: Optional[str] = None
+        client = await self._get_client()
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            while has_more:
-                url = f"{NOTION_API}/blocks/{page_id}/children?page_size=100"
-                if next_cursor:
-                    url += f"&start_cursor={next_cursor}"
+        while has_more:
+            url = f"{NOTION_API}/blocks/{page_id}/children?page_size=100"
+            if next_cursor:
+                url += f"&start_cursor={next_cursor}"
 
-                resp = await client.get(url, headers=self._headers)
-                resp.raise_for_status()
-                data = resp.json()
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
 
-                for block in data.get("results", []):
-                    text = self._extract_block_text(block)
-                    if text:
-                        blocks_text.append(text)
+            for block in data.get("results", []):
+                text = self._extract_block_text(block)
+                if text:
+                    blocks_text.append(text)
 
-                has_more = data.get("has_more", False)
-                next_cursor = data.get("next_cursor")
+            has_more = data.get("has_more", False)
+            next_cursor = data.get("next_cursor")
 
         return "\n".join(blocks_text)
 
@@ -258,19 +286,17 @@ class NotionService:
                 title_upper = t.title.upper().strip()
                 title_clean = t.title.strip()
 
-                # Detect MARK entry
                 if title_upper == "MARK":
                     mark_task = t
                 elif title_upper in ("MARK'S WEAK", "MARK'S WEEK"):
                     is_weekly = True
                     mark_task = t
 
-                # Add page title as activity (the real activity name: CODING, GYM, etc.)
+                # Add page title as activity
                 if title_clean and title_upper not in ("MARK", "MARK'S WEAK", "MARK'S WEEK"):
                     if title_clean not in all_activities:
                         all_activities.append(title_clean)
 
-                # Collect tags as additional context
                 for tag in t.tags:
                     tag_clean = tag.strip()
                     tag_upper = tag_clean.upper()
@@ -285,7 +311,6 @@ class NotionService:
                     if tag_upper in _KATE_TAGS:
                         flags["kate"] = True
 
-                # Also check title for activity detection
                 if title_upper in _WORKOUT_TAGS:
                     flags["workout"] = True
                 if title_upper in _UNI_TAGS:
@@ -300,7 +325,6 @@ class NotionService:
                 if t.checkbox:
                     completed += 1
 
-            # Parse MARK body for sleep, testik, rating
             sleep = SleepInfo()
             testik = None
             rating = None
@@ -313,12 +337,9 @@ class NotionService:
                 testik = parse_testik(body)
                 rating = parse_day_rating(body)
                 if not rating:
-                    logger.debug(
-                        "MARK %s: no rating parsed from body (first 300 chars): %s",
-                        day, body[:300],
-                    )
+                    logger.debug("MARK %s: no rating parsed from: %s", day, body[:300])
             elif mark_task:
-                logger.debug("MARK %s: body_text is empty (block fetch may have failed)", day)
+                logger.debug("MARK %s: body_text is empty", day)
 
             records.append(DailyRecord(
                 entry_date=day,
@@ -344,7 +365,6 @@ class NotionService:
 
 
 def _get_title(props: dict) -> str:
-    """Extract the page title (from the 'title' type property)."""
     for prop in props.values():
         if prop.get("type") == "title":
             texts = prop.get("title", [])

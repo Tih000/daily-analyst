@@ -36,8 +36,8 @@ from src.models.journal_entry import (
 
 logger = logging.getLogger(__name__)
 
-JOURNAL_TRUNCATE_RECENT = 1000   # full text for last year
-JOURNAL_TRUNCATE_ARCHIVE = 150   # short snippet for monthly summaries
+JOURNAL_TRUNCATE_RECENT = 300    # enough context per day (saves GPT tokens)
+JOURNAL_TRUNCATE_ARCHIVE = 100   # short snippet for monthly summaries
 
 
 def _system_prompt() -> str:
@@ -1094,9 +1094,12 @@ class AIAnalyzer:
         anomalies.sort(key=lambda a: abs(a.score - a.avg_score), reverse=True)
         return anomalies[:10]
 
-    async def explain_anomalies(self, records: list[DailyRecord]) -> str:
-        """Detect anomalies and ask GPT to explain them."""
-        anomalies = self.detect_anomalies(records)
+    async def explain_anomalies(
+        self, records: list[DailyRecord], anomalies: Optional[list[Anomaly]] = None
+    ) -> str:
+        """Explain anomalies using GPT. Accepts pre-computed anomalies to avoid double work."""
+        if anomalies is None:
+            anomalies = self.detect_anomalies(records)
         if not anomalies:
             return "✅ Нет значимых аномалий за последний период."
 
