@@ -66,7 +66,7 @@ class NotionService:
             return self._cache.get_daily_records(start_date, end_date)
 
         if start_date is None:
-            start_date = date.today() - timedelta(days=90)
+            start_date = date.today() - timedelta(days=900)
         if end_date is None:
             end_date = date.today()
 
@@ -113,10 +113,10 @@ class NotionService:
 
     async def sync_all(self) -> int:
         records = await self.get_daily_records(
-            start_date=date.today() - timedelta(days=365),
+            start_date=date.today() - timedelta(days=900),
             force_refresh=True,
         )
-        self._cache.cleanup_old(keep_days=365)
+        self._cache.cleanup_old(keep_days=900)
         return len(records)
 
     # ── Notion API calls ────────────────────────────────────────────────────

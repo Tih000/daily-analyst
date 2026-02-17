@@ -201,7 +201,7 @@ async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not update.message:
         return
     await update.message.reply_text("🔮 Оцениваю риск...")
-    records = await notion_service.get_recent(30)
+    records = await notion_service.get_recent(90)
     risk = await ai_analyzer.predict_burnout(records)
     emoji = {"low": "🟢", "medium": "🟡", "high": "🟠", "critical": "🔴"}.get(risk.risk_level, "⚪")
     text = f"🔥 *Burnout прогноз*\n\n{emoji} *{risk.risk_level.upper()}* ({risk.risk_score}%)\n\n"
@@ -242,7 +242,7 @@ async def cmd_optimal_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if not update.message:
         return
     await update.message.reply_text("⏰ Анализирую...")
-    records = await notion_service.get_recent(60)
+    records = await notion_service.get_recent(900)
     result = await ai_analyzer.optimal_hours(records)
     await _safe_reply(update.message, truncate_text(f"⏰ *Оптимальный режим*\n\n{result}"))
 
@@ -252,7 +252,7 @@ async def cmd_kate_impact(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not update.message:
         return
     await update.message.reply_text("💕 Анализирую...")
-    records = await notion_service.get_recent(90)
+    records = await notion_service.get_recent(900)
     await _safe_reply(update.message, truncate_text(f"💕 *Kate Impact*\n\n{await ai_analyzer.kate_impact(records)}"))
 
 
@@ -261,7 +261,7 @@ async def cmd_testik_patterns(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not update.message:
         return
     await update.message.reply_text("🧪 Анализирую...")
-    records = await notion_service.get_recent(90)
+    records = await notion_service.get_recent(900)
     await _safe_reply(update.message, truncate_text(f"🧪 *TESTIK*\n\n{await ai_analyzer.testik_patterns(records)}"))
     if records:
         await update.message.reply_photo(photo=io.BytesIO(charts_service.testik_chart(records)))
@@ -272,7 +272,7 @@ async def cmd_sleep_optimizer(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not update.message:
         return
     await update.message.reply_text("😴 Анализирую...")
-    records = await notion_service.get_recent(60)
+    records = await notion_service.get_recent(900)
     await _safe_reply(update.message, truncate_text(f"😴 *Сон*\n\n{await ai_analyzer.sleep_optimizer(records)}"))
     if records:
         await update.message.reply_photo(photo=io.BytesIO(charts_service.sleep_chart(records)))
@@ -283,7 +283,7 @@ async def cmd_money_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not update.message:
         return
     await update.message.reply_text("💼 Анализирую...")
-    records = await notion_service.get_recent(90)
+    records = await notion_service.get_recent(900)
     await _safe_reply(update.message, truncate_text(f"💼 *Работа*\n\n{await ai_analyzer.money_forecast(records)}"))
 
 
@@ -292,7 +292,7 @@ async def cmd_weak_spots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.message:
         return
     await update.message.reply_text("🔍 Ищу...")
-    records = await notion_service.get_recent(30)
+    records = await notion_service.get_recent(900)
     await _safe_reply(update.message, truncate_text(f"🔍 *Слабые места*\n\n{await ai_analyzer.weak_spots(records)}"))
 
 
@@ -313,7 +313,7 @@ async def cmd_tomorrow_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 async def cmd_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
-    records = await notion_service.get_recent(90)
+    records = await notion_service.get_recent(900)
     streaks = ai_analyzer.compute_streaks(records)
     if not streaks:
         await update.message.reply_text("📭 Нет данных.")
@@ -354,7 +354,7 @@ async def cmd_correlations(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not update.message:
         return
     await update.message.reply_text("🔗 Считаю корреляции...")
-    records = await notion_service.get_recent(90)
+    records = await notion_service.get_recent(900)
     corr = await ai_analyzer.compute_correlations(records)
     text = f"🔗 *Корреляции с оценкой дня*\n(baseline: {corr.baseline_rating:.1f}/6)\n\n"
     for c in sorted(corr.correlations, key=lambda x: x.vs_baseline, reverse=True):
@@ -374,7 +374,7 @@ async def cmd_day_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
     await update.message.reply_text("🏷️ Классифицирую дни...")
-    records = await notion_service.get_recent(90)
+    records = await notion_service.get_recent(900)
     result = await ai_analyzer.classify_day_types(records)
     await _safe_reply(update.message, truncate_text(f"🏷️ *Типы дней*\n\n{result}"))
 
@@ -407,7 +407,7 @@ async def cmd_habits(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "📅 Укажи привычку:\n/habits gym\n/habits coding\n/habits sleep7\n/habits `<любой тег>`"
         )
         return
-    records = await notion_service.get_recent(90)
+    records = await notion_service.get_recent(900)
     chart = charts_service.habit_heatmap(records, arg)
     await update.message.reply_photo(photo=io.BytesIO(chart), caption=f"📅 {arg.upper()} — 3 months")
 
@@ -460,7 +460,7 @@ async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
     await update.message.reply_text("📊 Считаю Life Score...")
-    records = await notion_service.get_recent(30)
+    records = await notion_service.get_recent(90)
     life = ai_analyzer.compute_life_score(records)
 
     text = f"🎯 *LIFE SCORE: {life.total:.0f}/100*"
@@ -482,7 +482,7 @@ async def cmd_formula(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not update.message:
         return
     await update.message.reply_text("🧬 Вычисляю формулу...")
-    records = await notion_service.get_recent(90)
+    records = await notion_service.get_recent(900)
     result = await ai_analyzer.formula(records)
     await _safe_reply(update.message, truncate_text(f"🧬 *Формула идеального дня*\n\n{result}"))
 
@@ -503,7 +503,7 @@ async def cmd_whatif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
     await update.message.reply_text("🔮 Моделирую сценарий...")
-    records = await notion_service.get_recent(60)
+    records = await notion_service.get_recent(900)
     result = await ai_analyzer.whatif(records, arg)
     await _safe_reply(update.message, truncate_text(f"🔮 *What-If: {arg}*\n\n{result}"))
 
@@ -515,7 +515,7 @@ async def cmd_anomalies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
     await update.message.reply_text("🔍 Ищу аномалии...")
-    records = await notion_service.get_recent(60)
+    records = await notion_service.get_recent(900)
     anomalies = ai_analyzer.detect_anomalies(records)
     explanation = await ai_analyzer.explain_anomalies(records)
 
@@ -531,7 +531,7 @@ async def cmd_anomalies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 async def cmd_milestones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not update.message:
         return
-    records = await notion_service.get_recent(365)
+    records = await notion_service.get_recent(900)
     milestones = ai_analyzer.detect_milestones(records)
 
     # Also load saved ones
@@ -576,8 +576,8 @@ async def handle_free_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     # Save user message
     cache_service.save_message(uid, "user", user_text)
 
-    # Get context
-    records = await notion_service.get_recent(30)
+    # Get full history for context
+    records = await notion_service.get_recent(900)
     chat_history = cache_service.get_recent_messages(uid, limit=20)
 
     # Generate response
