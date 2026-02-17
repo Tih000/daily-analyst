@@ -93,6 +93,25 @@ def authorized(func):
     return wrapper
 
 
+# ── Safe Markdown sender ─────────────────────────────────────────────────
+
+async def _safe_reply(message, text: str, **kwargs) -> None:
+    """Send with Markdown, fallback to plain text if Telegram can't parse it."""
+    try:
+        await message.reply_text(text, parse_mode="Markdown", **kwargs)
+    except Exception:
+        # Strip Markdown and resend as plain text
+        await message.reply_text(text, **kwargs)
+
+
+async def _safe_send(chat_id: int, text: str, **kwargs) -> None:
+    """Send via bot with Markdown, fallback to plain text."""
+    try:
+        await bot_app.bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown", **kwargs)
+    except Exception:
+        await bot_app.bot.send_message(chat_id=chat_id, text=text, **kwargs)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # ORIGINAL COMMANDS (11)
 # ═══════════════════════════════════════════════════════════════════════════
@@ -129,7 +148,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "😴 /sleep\\_optimizer /money\\_forecast /weak\\_spots\n\n"
         "💬 *Или просто напиши любое сообщение — я пойму!*"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await _safe_reply(update.message, text)
 
 
 @authorized
@@ -171,7 +190,7 @@ async def cmd_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         text += f"📉 Худший: {analysis.worst_day.entry_date} ({analysis.worst_day.productivity_score})\n"
     text += f"\n🤖 *AI:*\n{analysis.ai_insights}"
 
-    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(text))
     if records:
         await update.message.reply_photo(photo=io.BytesIO(charts_service.monthly_overview(records, label)))
         await update.message.reply_photo(photo=io.BytesIO(charts_service.activity_chart(records)))
@@ -189,7 +208,7 @@ async def cmd_predict(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     for f in risk.factors:
         text += f"• {f}\n"
     text += f"\n💡 {risk.recommendation}"
-    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(text))
     if len(records) >= 3:
         await update.message.reply_photo(photo=io.BytesIO(charts_service.burnout_chart(records)))
 
@@ -215,7 +234,7 @@ async def cmd_best_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         r = d.rating.emoji if d.rating else "❓"
         acts = ", ".join(d.activities[:5]) or "—"
         text += f"{medals[i]} *{d.entry_date}* — {d.productivity_score}pt {r}\n   {acts}\n\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await _safe_reply(update.message, text)
 
 
 @authorized
@@ -225,7 +244,7 @@ async def cmd_optimal_hours(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text("⏰ Анализирую...")
     records = await notion_service.get_recent(60)
     result = await ai_analyzer.optimal_hours(records)
-    await update.message.reply_text(truncate_text(f"⏰ *Оптимальный режим*\n\n{result}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"⏰ *Оптимальный режим*\n\n{result}"))
 
 
 @authorized
@@ -234,7 +253,7 @@ async def cmd_kate_impact(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     await update.message.reply_text("💕 Анализирую...")
     records = await notion_service.get_recent(90)
-    await update.message.reply_text(truncate_text(f"💕 *Kate Impact*\n\n{await ai_analyzer.kate_impact(records)}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"💕 *Kate Impact*\n\n{await ai_analyzer.kate_impact(records)}"))
 
 
 @authorized
@@ -243,7 +262,7 @@ async def cmd_testik_patterns(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await update.message.reply_text("🧪 Анализирую...")
     records = await notion_service.get_recent(90)
-    await update.message.reply_text(truncate_text(f"🧪 *TESTIK*\n\n{await ai_analyzer.testik_patterns(records)}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"🧪 *TESTIK*\n\n{await ai_analyzer.testik_patterns(records)}"))
     if records:
         await update.message.reply_photo(photo=io.BytesIO(charts_service.testik_chart(records)))
 
@@ -254,7 +273,7 @@ async def cmd_sleep_optimizer(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
     await update.message.reply_text("😴 Анализирую...")
     records = await notion_service.get_recent(60)
-    await update.message.reply_text(truncate_text(f"😴 *Сон*\n\n{await ai_analyzer.sleep_optimizer(records)}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"😴 *Сон*\n\n{await ai_analyzer.sleep_optimizer(records)}"))
     if records:
         await update.message.reply_photo(photo=io.BytesIO(charts_service.sleep_chart(records)))
 
@@ -265,7 +284,7 @@ async def cmd_money_forecast(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
     await update.message.reply_text("💼 Анализирую...")
     records = await notion_service.get_recent(90)
-    await update.message.reply_text(truncate_text(f"💼 *Работа*\n\n{await ai_analyzer.money_forecast(records)}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"💼 *Работа*\n\n{await ai_analyzer.money_forecast(records)}"))
 
 
 @authorized
@@ -274,7 +293,7 @@ async def cmd_weak_spots(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     await update.message.reply_text("🔍 Ищу...")
     records = await notion_service.get_recent(30)
-    await update.message.reply_text(truncate_text(f"🔍 *Слабые места*\n\n{await ai_analyzer.weak_spots(records)}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"🔍 *Слабые места*\n\n{await ai_analyzer.weak_spots(records)}"))
 
 
 @authorized
@@ -283,7 +302,7 @@ async def cmd_tomorrow_mood(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
     await update.message.reply_text("🔮 Предсказываю...")
     records = await notion_service.get_recent(14)
-    await update.message.reply_text(truncate_text(f"🔮 *Прогноз*\n\n{await ai_analyzer.tomorrow_mood(records)}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"🔮 *Прогноз*\n\n{await ai_analyzer.tomorrow_mood(records)}"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -303,7 +322,7 @@ async def cmd_streaks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     for s in streaks:
         bar = "🟩" * min(s.current, 10) + ("…" if s.current > 10 else "")
         text += f"{s.emoji} *{s.name}:* {s.current} дн. (рекорд: {s.record})\n{bar}\n\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await _safe_reply(update.message, text)
 
 
 @authorized
@@ -326,7 +345,7 @@ async def cmd_compare(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     for d in comp.deltas:
         text += f"{d.emoji} {d.name}: {d.value_a:.1f} → {d.value_b:.1f} ({d.trend_emoji} {d.arrow}{abs(d.delta):.1f})\n"
     text += f"\n🤖 *AI:*\n{comp.ai_insights}"
-    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(text))
     await update.message.reply_photo(photo=io.BytesIO(charts_service.compare_chart(comp)))
 
 
@@ -346,7 +365,7 @@ async def cmd_correlations(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         for ci in corr.combo_insights[:5]:
             text += f"  • {ci}\n"
     text += f"\n🤖 {corr.ai_insights}"
-    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(text))
     await update.message.reply_photo(photo=io.BytesIO(charts_service.correlation_chart(corr)))
 
 
@@ -357,7 +376,7 @@ async def cmd_day_types(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("🏷️ Классифицирую дни...")
     records = await notion_service.get_recent(90)
     result = await ai_analyzer.classify_day_types(records)
-    await update.message.reply_text(truncate_text(f"🏷️ *Типы дней*\n\n{result}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"🏷️ *Типы дней*\n\n{result}"))
 
 
 @authorized
@@ -409,7 +428,7 @@ async def cmd_set_goal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         target_activity=activity, target_count=count, period=period,
     )
     cache_service.upsert_goal(goal)
-    await update.message.reply_text(f"✅ Цель: *{activity}* {count}/{period}", parse_mode="Markdown")
+    await _safe_reply(update.message, f"✅ Цель: *{activity}* {count}/{period}")
 
 
 @authorized
@@ -419,7 +438,7 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     uid = update.effective_user.id  # type: ignore
     goals = cache_service.get_goals(uid)
     if not goals:
-        await update.message.reply_text("📭 Нет целей. /set\\_goal для создания.", parse_mode="Markdown")
+        await _safe_reply(update.message, "📭 Нет целей. /set\\_goal для создания.")
         return
     records = await notion_service.get_recent(30)
     progress_list = ai_analyzer.compute_goal_progress(goals, records)
@@ -427,7 +446,7 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     for p in progress_list:
         done = "✅" if p.is_complete else ""
         text += f"{p.bar} *{p.goal.name}* {p.current}/{p.target} ({p.percentage:.0f}%) {done}\n"
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await _safe_reply(update.message, text)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -452,7 +471,7 @@ async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     for d in life.dimensions:
         text += f"{d.emoji} {d.name}: {d.bar} {d.score:.0f}% {d.trend}\n"
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await _safe_reply(update.message, text)
     await update.message.reply_photo(photo=io.BytesIO(charts_service.dashboard_chart(life)))
 
 
@@ -465,7 +484,7 @@ async def cmd_formula(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await update.message.reply_text("🧬 Вычисляю формулу...")
     records = await notion_service.get_recent(90)
     result = await ai_analyzer.formula(records)
-    await update.message.reply_text(truncate_text(f"🧬 *Формула идеального дня*\n\n{result}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"🧬 *Формула идеального дня*\n\n{result}"))
 
 
 # ── /whatif — What-If Simulator ─────────────────────────────────────────────
@@ -486,7 +505,7 @@ async def cmd_whatif(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("🔮 Моделирую сценарий...")
     records = await notion_service.get_recent(60)
     result = await ai_analyzer.whatif(records, arg)
-    await update.message.reply_text(truncate_text(f"🔮 *What-If: {arg}*\n\n{result}"), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(f"🔮 *What-If: {arg}*\n\n{result}"))
 
 
 # ── /anomalies — Anomaly Detection ─────────────────────────────────────────
@@ -501,7 +520,7 @@ async def cmd_anomalies(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     explanation = await ai_analyzer.explain_anomalies(records)
 
     text = f"🔍 *Аномалии*\n\n{explanation}"
-    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(text))
     if anomalies and records:
         await update.message.reply_photo(photo=io.BytesIO(charts_service.anomaly_chart(records, anomalies)))
 
@@ -537,7 +556,7 @@ async def cmd_milestones(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         text += f"{m.emoji} *{m.entry_date}* — {m.title}\n"
         if m.description:
             text += f"   {m.description}\n"
-    await update.message.reply_text(truncate_text(text), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(text))
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -568,7 +587,7 @@ async def handle_free_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     cache_service.save_message(uid, "assistant", response)
     cache_service.cleanup_messages(uid, keep=50)
 
-    await update.message.reply_text(truncate_text(response), parse_mode="Markdown")
+    await _safe_reply(update.message, truncate_text(response))
 
 
 # ── Register all handlers ──────────────────────────────────────────────────
@@ -622,7 +641,7 @@ async def _background_loop() -> None:
                     briefing = await ai_analyzer.morning_briefing(records)
                     for uid in uids:
                         try:
-                            await bot_app.bot.send_message(chat_id=uid, text=truncate_text(briefing), parse_mode="Markdown")
+                            await _safe_send(uid, truncate_text(briefing))
                         except Exception as e:
                             logger.warning("Morning briefing send error: %s", e)
                 except Exception as e:
@@ -639,7 +658,7 @@ async def _background_loop() -> None:
                         alert_text = "⚡ *Jarvis Alert*\n\n" + "\n".join(f"• {a}" for a in alerts)
                         for uid in uids:
                             try:
-                                await bot_app.bot.send_message(chat_id=uid, text=alert_text, parse_mode="Markdown")
+                                await _safe_send(uid, alert_text)
                             except Exception as e:
                                 logger.warning("Alert send error: %s", e)
                 except Exception as e:
@@ -654,9 +673,7 @@ async def _background_loop() -> None:
                     digest_text = f"📋 *Еженедельный дайджест*\n\n{digest}"
                     for uid in uids:
                         try:
-                            await bot_app.bot.send_message(
-                                chat_id=uid, text=truncate_text(digest_text), parse_mode="Markdown"
-                            )
+                            await _safe_send(uid, truncate_text(digest_text))
                         except Exception as e:
                             logger.warning("Digest send error: %s", e)
                 except Exception as e:
