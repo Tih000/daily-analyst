@@ -36,7 +36,8 @@ from src.models.journal_entry import (
 
 logger = logging.getLogger(__name__)
 
-JOURNAL_TRUNCATE = 200
+JOURNAL_TRUNCATE_RECENT = 1000   # full text for last year
+JOURNAL_TRUNCATE_ARCHIVE = 150   # short snippet for monthly summaries
 
 
 def _system_prompt() -> str:
@@ -149,26 +150,24 @@ class AIAnalyzer:
                 )
             lines.append("")
 
-        # Recent records: full daily detail
+        # Recent records: full daily detail with complete journal text
         if recent:
             lines.append(f"=== ПОДРОБНО ({recent[0].entry_date} — {recent[-1].entry_date}) ===")
             for r in recent:
                 rating_str = r.rating.value if r.rating else "N/A"
                 testik_str = r.testik.value if r.testik else "N/A"
                 sleep_str = f"{r.sleep.sleep_hours}h" if r.sleep.sleep_hours else "N/A"
-                activities_str = ", ".join(r.activities[:8]) if r.activities else "none"
-                journal_snippet = ""
-                if r.journal_text:
-                    journal_snippet = r.journal_text.strip()[:JOURNAL_TRUNCATE]
-                    if len(r.journal_text) > JOURNAL_TRUNCATE:
-                        journal_snippet += "…"
+                activities_str = ", ".join(r.activities[:10]) if r.activities else "none"
                 line = (
                     f"{r.entry_date}: rating={rating_str}, hours={r.total_hours}, "
                     f"sleep={sleep_str}, testik={testik_str}, tasks={r.tasks_count}, "
                     f"activities=[{activities_str}], score={r.productivity_score}"
                 )
-                if journal_snippet:
-                    line += f"\n  journal: {journal_snippet}"
+                if r.journal_text:
+                    jt = r.journal_text.strip()[:JOURNAL_TRUNCATE_RECENT]
+                    if len(r.journal_text) > JOURNAL_TRUNCATE_RECENT:
+                        jt += "…"
+                    line += f"\n  journal: {jt}"
                 lines.append(line)
 
         return "\n".join(lines)
